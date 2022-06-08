@@ -53,7 +53,7 @@
 
 namespace tarxx {
 
-    using std::string_literals::operator""s;
+using std::string_literals::operator""s;
 
 #ifdef __linux
     struct errno_exception : std::system_error {
@@ -62,7 +62,7 @@ namespace tarxx {
     };
 #endif
 
-    static constexpr int BLOCK_SIZE = 512;
+    static constexpr const int BLOCK_SIZE = 512;
     using block_t = std::array<char, BLOCK_SIZE>;
 
     struct tarfile {
@@ -75,11 +75,11 @@ namespace tarxx {
         using callback_t = std::function<void(const block_t&)>;
 
         explicit tarfile(const std::string& filename, tar_type type = tar_type::unix_v7)
-            : file_(filename, std::ios::out | std::ios::binary), callback_(nullptr), mode_(output_mode::file_output), type_(type), stream_file_header_pos_(-1), stream_block_used_(0)
+                : file_(filename, std::ios::out | std::ios::binary), callback_(nullptr), mode_(output_mode::file_output), type_(type), stream_file_header_pos_(-1), stream_block_used_(0)
         {}
 
         explicit tarfile(callback_t callback, tar_type type = tar_type::unix_v7)
-            : file_(), callback_(std::move(callback)), mode_(output_mode::stream_output), type_(type), stream_file_header_pos_(-1), stream_block_used_(0)
+                : file_(), callback_(std::move(callback)), mode_(output_mode::stream_output), type_(type)
         {}
 
         ~tarfile()
@@ -90,10 +90,8 @@ namespace tarxx {
         bool is_open()
         {
             switch (mode_) {
-                case output_mode::file_output:
-                    return file_.is_open();
-                case output_mode::stream_output:
-                    return callback_ != nullptr;
+                case output_mode::file_output: return file_.is_open();
+                case output_mode::stream_output: return callback_ != nullptr;
             }
             throw std::logic_error("unsupported output mode");
         }
@@ -106,7 +104,7 @@ namespace tarxx {
 
         void add_file(const std::string& filename)
         {
-            if (stream_file_header_pos_ >= 0) throw std::logic_error("Can't add new file while adding streaming data isn't completed");
+            if (stream_file_header_pos_ >= 0) throw std::logic_error("Can't add new file before add_file_complete has been called");
 
             block_t block;
             std::fstream infile(filename, std::ios::in | std::ios::binary);
@@ -122,10 +120,10 @@ namespace tarxx {
 
         void add_file_streaming()
         {
-            if (stream_file_header_pos_ >= 0) throw std::logic_error("Can't add new file while adding streaming data isn't completed");
+            if (stream_file_header_pos_ >= 0) throw std::logic_error("Can't add new file before add_file_complete has been called");
             if (mode_ != output_mode::file_output) throw std::logic_error(__func__ + " only supports output mode file"s);
 
-            // write empty header
+            // write emtpy header
             stream_file_header_pos_ = file_.tellg();
             block_t header {};
             write(header);
@@ -134,11 +132,12 @@ namespace tarxx {
         void add_file_streaming_data(const char* const data, std::streamsize size)
         {
             unsigned long pos = 0;
-            block_t block;
 
             // fill a new block with old and new data if enough data
             // is available to fill a whole block
             if ((stream_block_used_ + size) >= BLOCK_SIZE) {
+                block_t block;
+
                 // copy saved data
                 std::copy_n(stream_block_.data(), stream_block_used_, block.data());
 
@@ -156,6 +155,7 @@ namespace tarxx {
 
             // write new block as long as we have enough data to fill a whole block
             while (size >= BLOCK_SIZE) {
+                block_t block;
                 std::copy_n(data + pos, BLOCK_SIZE, block.data());
                 pos += BLOCK_SIZE;
                 size -= BLOCK_SIZE;
@@ -167,11 +167,12 @@ namespace tarxx {
             stream_block_used_ += size;
         }
 
-#ifdef __linux
         void stream_file_complete(const std::string& filename, __mode_t mode, __uid_t uid, __gid_t gid, __off_t size, __time_t mod_time)
         {
-            // create last block, 0 init to ensure correctness if size < block size
-            block_t block {};
+            // create last block and fill with 0 if necessary
+            block_t block;
+            if (stream_block_used_ < block.size())
+                std::fill_n(block.begin() + stream_block_used_, block.size() - stream_block_used_, 0);
             std::copy_n(stream_block_.data(), block.size(), block.data());
             stream_block_used_ = 0;
             write(block);
@@ -185,7 +186,6 @@ namespace tarxx {
 
             file_.seekp(stream_pos);
         }
-#endif
 
     private:
         static constexpr unsigned int HEADER_POS_MODE = 100U;
@@ -232,7 +232,6 @@ namespace tarxx {
 #endif
         }
 
-#ifdef __linux
         void write_header(const std::string& filename, __mode_t mode, __uid_t uid, __gid_t gid, __off_t size, __time_t time)
         {
             if (type_ != tar_type::unix_v7) throw std::logic_error("unsupported tar format");
@@ -241,9 +240,8 @@ namespace tarxx {
 
             write_into_block(header, filename, 0, 100);
 
-            // clang-format off
+#ifdef __linux
             struct ::stat buffer {};
-            // clang-format on
             const auto stat_result = ::stat(filename.c_str(), &buffer);
             if (stat_result != 0) {
                 throw errno_exception();
@@ -304,6 +302,7 @@ namespace tarxx {
         long stream_file_header_pos_;
         block_t stream_block_;
         size_t stream_block_used_;
+
     };
 
 } // namespace tarxx

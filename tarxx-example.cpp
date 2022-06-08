@@ -26,8 +26,7 @@
 
 #include "tarxx.h"
 
-int tar_file_mode(const int argc, const char* const* const argv)
-{
+int tarFile(const int argc, const char* const* const argv) {
     if (argc < 2) return 1;
     tarxx::tarfile tar(argv[1] + std::string("_file.tar"));
     if (!tar.is_open()) return 2;
@@ -37,16 +36,15 @@ int tar_file_mode(const int argc, const char* const* const argv)
     return 0;
 }
 
-int tar_streaming_mode(const int argc, const char* const* const argv)
-{
+int tarStreaming(const int argc, const char* const* const argv) {
     if (argc < 2) return 1;
     tarxx::tarfile tar(argv[1] + std::string("_stream.tar"));
     if (!tar.is_open()) return 2;
     for (unsigned i = 2; i < argc; ++i) {
         tar.add_file_streaming();
         std::ifstream infile(argv[i], std::ios::binary);
-        std::array<char, 1466> buf {};
-        std::streamsize file_size = 0;
+        std::array<char, 1466> buf{};
+        std::streamsize file_size =0;
 
         while (infile.good()) {
             infile.read(buf.data(), buf.size());
@@ -62,9 +60,9 @@ int tar_streaming_mode(const int argc, const char* const* const argv)
 
 int main(const int argc, const char* const* const argv)
 {
-    auto returnValue = tar_file_mode(argc, argv);
-    if (returnValue != 0) return returnValue;
+   auto returnValue = tarFile(argc, argv);
+   if (returnValue != 0) return returnValue;
 
-    returnValue = tar_streaming_mode(argc, argv);
-    return returnValue;
+   returnValue = tarStreaming(argc, argv);
+   return returnValue;
 }
