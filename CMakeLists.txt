@@ -15,4 +15,4 @@ else()
 endif()
 
 add_executable(tarxx-example tarxx-example.cpp)
-target_link_libraries(tarxx-example tarxx)
+target_link_libraries(tarxx-example tarxx lz4)

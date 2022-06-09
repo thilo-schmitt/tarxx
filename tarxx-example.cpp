@@ -28,7 +28,7 @@
 
 int tarFile(const int argc, const char* const* const argv) {
     if (argc < 2) return 1;
-    tarxx::tarfile tar(argv[1] + std::string("_file.tar"));
+    tarxx::tarfile tar(argv[1] + std::string("_file.tar"), tarxx::tarfile::compression_mode::none);
     if (!tar.is_open()) return 2;
     for (unsigned i = 2; i < argc; ++i) {
         tar.add_file(argv[i]);
@@ -38,7 +38,7 @@ int tarFile(const int argc, const char* const* const argv) {
 
 int tarStreaming(const int argc, const char* const* const argv) {
     if (argc < 2) return 1;
-    tarxx::tarfile tar(argv[1] + std::string("_stream.tar"));
+    tarxx::tarfile tar(argv[1] + std::string("_stream.tar.lz4"), tarxx::tarfile::compression_mode::lz4);
     if (!tar.is_open()) return 2;
     for (unsigned i = 2; i < argc; ++i) {
         tar.add_file_streaming();
@@ -60,9 +60,9 @@ int tarStreaming(const int argc, const char* const* const argv) {
 
 int main(const int argc, const char* const* const argv)
 {
-   auto returnValue = tarFile(argc, argv);
-   if (returnValue != 0) return returnValue;
+//   auto returnValue = tarFile(argc, argv);
+//   if (returnValue != 0) return returnValue;
 
-   returnValue = tarStreaming(argc, argv);
+   auto returnValue = tarStreaming(argc, argv);
    return returnValue;
 }

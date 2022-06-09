@@ -72,14 +72,27 @@ using std::string_literals::operator""s;
             //TODO support for utar, star, etc.
         };
 
+       enum class compression_mode : unsigned {
+           none,
+           lz4,
+       };
+
+
         using callback_t = std::function<void(const block_t&)>;
 
-        explicit tarfile(const std::string& filename, tar_type type = tar_type::unix_v7)
-                : file_(filename, std::ios::out | std::ios::binary), callback_(nullptr), mode_(output_mode::file_output), type_(type), stream_file_header_pos_(-1), stream_block_used_(0)
-        {}
+        explicit tarfile(const std::string& filename, compression_mode compression, tar_type type = tar_type::unix_v7)
+                : file_(filename, std::ios::out | std::ios::binary),
+                    callback_(nullptr), mode_(output_mode::file_output),
+                    type_(type), stream_file_header_pos_(-1), stream_block_used_(0),
+                    compression_(compression)
+        {
+            if (compression_ == compression_mode::lz4) {
+                init_lz4();
+            }
+        }
 
         explicit tarfile(callback_t callback, tar_type type = tar_type::unix_v7)
-                : file_(), callback_(std::move(callback)), mode_(output_mode::stream_output), type_(type)
+                : file_(), callback_(std::move(callback)), mode_(output_mode::stream_output), type_(type), stream_file_header_pos_(-1), stream_block_used_(0)
         {}
 
         ~tarfile()
@@ -107,7 +120,7 @@ using std::string_literals::operator""s;
             if (stream_file_header_pos_ >= 0) throw std::logic_error("Can't add new file before add_file_complete has been called");
 
             block_t block;
-            std::fstream infile(filename, std::ios::in | std::ios::binary);
+            std::fstream infile(filename, std::ios::in|std::ios::binary);
             if (!infile.is_open()) return;
             write_header(filename);
             while (infile.good()) {
@@ -123,10 +136,15 @@ using std::string_literals::operator""s;
             if (stream_file_header_pos_ >= 0) throw std::logic_error("Can't add new file before add_file_complete has been called");
             if (mode_ != output_mode::file_output) throw std::logic_error(__func__ + " only supports output mode file"s);
 
+            // flush is necessary to get the correct position of the header
+            if (compression_== compression_mode::lz4) {
+                lz4_flush();
+            }
+
             // write emtpy header
             stream_file_header_pos_ = file_.tellg();
             block_t header {};
-            write(header);
+            write(header, true);
         }
 
         void add_file_streaming_data(const char* const data, std::streamsize size)
@@ -177,9 +195,13 @@ using std::string_literals::operator""s;
             stream_block_used_ = 0;
             write(block);
 
-            const auto stream_pos = file_.tellp();
+            // flush is necessary so seek to the correct positions
+            if (compression_== compression_mode::lz4) {
+                lz4_flush();
+            }
 
             // seek to header
+            const auto stream_pos = file_.tellp();
             file_.seekp(stream_file_header_pos_);
             write_header(filename, mode, uid, gid, size, mod_time);
             stream_file_header_pos_ = -1;
@@ -199,7 +221,16 @@ using std::string_literals::operator""s;
         static constexpr unsigned int HEADER_LEN_SIZE = 11U;
         static constexpr unsigned int HEADER_LEN_MTIM = 11U;
 
-        void write(const block_t& data)
+        void lz4_flush() {
+            const auto lz4_result = LZ4F_flush(lz4_ctx_, lz4_out_buf_.data(), lz4_out_buf_.capacity(), nullptr);
+            if (LZ4F_isError(lz4_result) != 0) {
+                throw std::runtime_error("Failed to start compression: error "s + LZ4F_getErrorName(lz4_result));
+            }
+            lz4_out_buf_pos_ += lz4_result;
+            write_lz4_data();
+        }
+
+        void write(const block_t& data, bool is_header = false)
         {
             if (!is_open()) return;
             switch (mode_) {
@@ -207,7 +238,33 @@ using std::string_literals::operator""s;
                     callback_(data);
                     break;
                 case output_mode::file_output:
-                    file_.write(data.data(), data.size());
+                    if (compression_ == compression_mode::lz4) {
+                        if (is_header) {
+                            // todo write common function which does compress, error check, write
+                            auto lz4_result = LZ4F_uncompressedUpdate(
+                                lz4_ctx_, lz4_out_buf_.data(), lz4_out_buf_.capacity(),
+                                data.data(), data.size(), nullptr);
+                            if (LZ4F_isError(lz4_result) != 0) {
+                                throw std::runtime_error("Failed to start compression: error "s + LZ4F_getErrorName(lz4_result));
+                            }
+                            lz4_out_buf_pos_ += lz4_result;
+                            // flush is necessary to keep lz4_out_buf_pos_ constistent
+                            lz4_flush();
+                        } else {
+                            const auto lz4_result = LZ4F_compressUpdate(
+                                lz4_ctx_, lz4_out_buf_.data(), lz4_out_buf_.capacity(),
+                                data.data(), data.size(), nullptr);
+                            if (LZ4F_isError(lz4_result) != 0) {
+                                throw std::runtime_error("Failed to start compression: error "s + LZ4F_getErrorName(lz4_result));
+                            }
+                            lz4_out_buf_pos_ += lz4_result;
+                            write_lz4_data();
+                        }
+                    } else {
+                        file_.write(data.data(), data.size());
+                    }
+
+                    file_.flush();
                     break;
             }
         }
@@ -217,6 +274,17 @@ using std::string_literals::operator""s;
             block_t zeroes {};
             write(zeroes);
             write(zeroes);
+
+            if (compression_ == compression_mode::lz4) {
+                const auto lz4_result = LZ4F_compressEnd(
+                    lz4_ctx_, lz4_out_buf_.data(), lz4_out_buf_.capacity(), nullptr);
+                if (LZ4F_isError(lz4_result) != 0) {
+                    throw std::runtime_error("Failed to end compression: error "s + LZ4F_getErrorName(lz4_result));
+                }
+                lz4_out_buf_pos_ += lz4_result;
+                write_lz4_data();
+                free(lz4_ctx_); // todo wrap in uniqueptr
+            }
         }
 
         void write_header(const std::string& filename)
@@ -258,7 +326,7 @@ using std::string_literals::operator""s;
 
             calc_and_write_checksum(header);
 
-            write(header);
+            write(header, true);
         }
 
         static void write_into_block(block_t& block, const unsigned long long value, const unsigned pos, const unsigned len)
@@ -269,12 +337,12 @@ using std::string_literals::operator""s;
         static void write_into_block(block_t& block, const std::string& str, const unsigned pos, const unsigned len)
         {
             const auto copylen = str.size() < len ? str.size() : len;
-            std::copy_n(str.c_str(), copylen, block.data() + pos);
+            std::copy_n(str.c_str(), copylen, block.data()+pos);
         }
 
         static void calc_and_write_checksum(block_t& block)
         {
-            std::fill_n(block.data() + 148, 8, ' ');
+            std::fill_n(block.data()+148, 8, ' ');
             unsigned chksum = 0;
             for (unsigned char c : block) chksum += (c & 0xFF);
             write_into_block(block, chksum, 148, 6);
@@ -286,8 +354,33 @@ using std::string_literals::operator""s;
             std::stringstream sstr;
             sstr << std::oct << std::ios::right << std::setfill('0') << std::setw(width) << value;
             auto str = sstr.str();
-            if (str.size() > width) str = str.substr(str.size() - width);
+            if (str.size() > width) str = str.substr(str.size()-width);
             return str;
+        }
+
+        void init_lz4() {
+            const size_t ctxCreation = LZ4F_createCompressionContext(&lz4_ctx_, LZ4F_VERSION);
+            if (LZ4F_isError(ctxCreation) != 0) {
+                throw std::runtime_error("Failed to create context: error "s + LZ4F_getErrorName(ctxCreation));
+            }
+
+            const size_t outbuf_size = LZ4F_compressBound(16*1024, &kPrefs);
+
+            lz4_out_buf_.reserve(outbuf_size);
+            const size_t headerSize = LZ4F_compressBegin(lz4_ctx_, lz4_out_buf_.data(), lz4_out_buf_.capacity(), &kPrefs);
+            if (LZ4F_isError(headerSize) != 0) {
+                throw std::runtime_error("Failed to start compression: error "s + LZ4F_getErrorName(headerSize));
+            }
+            lz4_out_buf_pos_ += headerSize;
+            write_lz4_data();
+        }
+
+        void write_lz4_data() {
+            file_.write(lz4_out_buf_.data(), lz4_out_buf_pos_);
+            if (!file_.good()) {
+                throw std::runtime_error("Failed to write lz4 data");
+            }
+            lz4_out_buf_pos_ = 0;
         }
 
         enum class output_mode : unsigned {
@@ -297,11 +390,26 @@ using std::string_literals::operator""s;
 
         tar_type type_;
         output_mode mode_;
+        compression_mode compression_;
         std::fstream file_;
         callback_t callback_;
         long stream_file_header_pos_;
         block_t stream_block_;
         size_t stream_block_used_;
+
+        LZ4F_compressionContext_t lz4_ctx_;
+        std::vector<char> lz4_out_buf_;
+        size_t lz4_out_buf_pos_ = 0;
+
+        static constexpr const LZ4F_preferences_t kPrefs = {
+            { LZ4F_max256KB, LZ4F_blockLinked, LZ4F_noContentChecksum,
+                LZ4F_frame, 0 /* unknown content size */, 0 /* no dictID */,
+                LZ4F_noBlockChecksum },
+            0, /* compression level; 0 == default */
+            0, /* autoflush */
+            0, /* favor decompression speed */
+            { 0, 0, 0 }, /* reserved, must be set to 0 */
+        };
 
     };
 
