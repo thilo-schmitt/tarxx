@@ -14,5 +14,12 @@ else()
         CXX_EXTENSIONS OFF)
 endif()
 
+add_subdirectory(lib/lz4/build/cmake)
+
 add_executable(tarxx-example tarxx-example.cpp)
-target_link_libraries(tarxx-example tarxx lz4)
+set_target_properties(tarxx-example PROPERTIES
+        CXX_STANDARD 17
+        CXX_STANDARD_REQUIRED ON
+        CXX_EXTENSIONS OFF)
+
+target_link_libraries(tarxx-example tarxx lz4_static)
