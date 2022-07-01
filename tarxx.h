@@ -28,26 +28,26 @@
 #define TARXX_TARXX_H_F498949DFCF643A3B77C60CF3AA29F36
 
 
+#include <algorithm>
 #include <array>
-#include <string>
-#include <sstream>
+#include <chrono>
 #include <fstream>
 #include <functional>
-#include <algorithm>
-#include <chrono>
-#include <stdexcept>
-#include <system_error>
-#include <iostream>
 #include <iomanip>
+#include <iostream>
+#include <sstream>
+#include <stdexcept>
+#include <string>
+#include <system_error>
 
 #if __linux
-#  include <sys/sysmacros.h>
-#  include <sys/types.h>
-#  include <sys/stat.h>
-#  include <fcntl.h>
-#  include <cerrno>
+#    include <cerrno>
+#    include <fcntl.h>
+#    include <sys/stat.h>
+#    include <sys/sysmacros.h>
+#    include <sys/types.h>
 #else
-#  error "no support for targeted platform"
+#    error "no support for targeted platform"
 #endif
 
 
@@ -72,12 +72,10 @@ namespace tarxx {
         using callback_t = std::function<void(const block_t&)>;
 
         explicit tarfile(const std::string& filename, tar_type type = tar_type::unix_v7)
-                : file_(filename, std::ios::out | std::ios::binary), callback_(nullptr), mode_(output_mode::file_output), type_(type)
-        {}
+            : file_(filename, std::ios::out | std::ios::binary), callback_(nullptr), mode_(output_mode::file_output), type_(type) {}
 
         explicit tarfile(callback_t callback, tar_type type = tar_type::unix_v7)
-                : file_(), callback_(std::move(callback)), mode_(output_mode::stream_output), type_(type)
-        {}
+            : file_(), callback_(std::move(callback)), mode_(output_mode::stream_output), type_(type) {}
 
         ~tarfile()
         {
@@ -87,8 +85,10 @@ namespace tarxx {
         bool is_open()
         {
             switch (mode_) {
-                case output_mode::file_output: return file_.is_open();
-                case output_mode::stream_output: return callback_ != nullptr;
+                case output_mode::file_output:
+                    return file_.is_open();
+                case output_mode::stream_output:
+                    return callback_ != nullptr;
             }
             throw std::logic_error("unsupported output mode");
         }
@@ -102,7 +102,7 @@ namespace tarxx {
         void add_file(const std::string& filename)
         {
             block_t block;
-            std::fstream infile(filename, std::ios::in|std::ios::binary);
+            std::fstream infile(filename, std::ios::in | std::ios::binary);
             if (!infile.is_open()) return;
             write_header(filename);
             while (infile.good()) {
@@ -114,7 +114,6 @@ namespace tarxx {
         }
 
     private:
-
         void write(const block_t& data)
         {
             if (!is_open()) return;
@@ -172,12 +171,12 @@ namespace tarxx {
         static void write_into_block(block_t& block, const std::string& str, const unsigned pos, const unsigned len)
         {
             const auto copylen = str.size() < len ? str.size() : len;
-            std::copy_n(str.c_str(), copylen, block.data()+pos);
+            std::copy_n(str.c_str(), copylen, block.data() + pos);
         }
 
         static void calc_and_write_checksum(block_t& block)
         {
-            std::fill_n(block.data()+148, 8, ' ');
+            std::fill_n(block.data() + 148, 8, ' ');
             unsigned chksum = 0;
             for (unsigned char c : block) chksum += (c & 0xFF);
             write_into_block(block, chksum, 148, 6);
@@ -189,7 +188,7 @@ namespace tarxx {
             std::stringstream sstr;
             sstr << std::oct << std::ios::right << std::setfill('0') << std::setw(width) << value;
             auto str = sstr.str();
-            if (str.size() > width) str = str.substr(str.size()-width);
+            if (str.size() > width) str = str.substr(str.size() - width);
             return str;
         }
 
@@ -204,7 +203,7 @@ namespace tarxx {
         callback_t callback_;
     };
 
-}
+} // namespace tarxx
 
 
 #endif //TARXX_TARXX_H_F498949DFCF643A3B77C60CF3AA29F36
