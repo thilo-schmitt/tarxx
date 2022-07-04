@@ -222,9 +222,7 @@ namespace tarxx {
         void write_header(const std::string& filename)
         {
 #ifdef __linux
-            // clang-format off
             struct ::stat buffer {};
-            // clang-format on
             const auto stat_result = ::stat(filename.c_str(), &buffer);
             if (stat_result != 0) {
                 throw errno_exception();
