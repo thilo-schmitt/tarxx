@@ -53,6 +53,8 @@
 
 namespace tarxx {
 
+    using std::string_literals::operator""s;
+
 #ifdef __linux
     struct errno_exception : std::system_error {
         errno_exception() : std::system_error(std::error_code(errno, std::generic_category())) {}
@@ -60,7 +62,8 @@ namespace tarxx {
     };
 #endif
 
-    using block_t = std::array<char, 512>;
+    static constexpr int BLOCK_SIZE = 512;
+    using block_t = std::array<char, BLOCK_SIZE>;
 
     struct tarfile {
 
@@ -72,10 +75,12 @@ namespace tarxx {
         using callback_t = std::function<void(const block_t&)>;
 
         explicit tarfile(const std::string& filename, tar_type type = tar_type::unix_v7)
-            : file_(filename, std::ios::out | std::ios::binary), callback_(nullptr), mode_(output_mode::file_output), type_(type) {}
+            : file_(filename, std::ios::out | std::ios::binary), callback_(nullptr), mode_(output_mode::file_output), type_(type), stream_file_header_pos_(-1), stream_block_used_(0)
+        {}
 
         explicit tarfile(callback_t callback, tar_type type = tar_type::unix_v7)
-            : file_(), callback_(std::move(callback)), mode_(output_mode::stream_output), type_(type) {}
+            : file_(), callback_(std::move(callback)), mode_(output_mode::stream_output), type_(type), stream_file_header_pos_(-1), stream_block_used_(0)
+        {}
 
         ~tarfile()
         {
@@ -101,19 +106,99 @@ namespace tarxx {
 
         void add_file(const std::string& filename)
         {
+            if (stream_file_header_pos_ >= 0) throw std::logic_error("Can't add new file while adding streaming data isn't completed");
+
             block_t block;
             std::fstream infile(filename, std::ios::in | std::ios::binary);
             if (!infile.is_open()) return;
             write_header(filename);
             while (infile.good()) {
                 infile.read(block.data(), block.size());
-                auto read = infile.gcount();
+                const auto read = infile.gcount();
                 if (read < block.size()) std::fill_n(block.begin() + read, block.size() - read, 0);
                 write(block);
             }
         }
 
+        void add_file_streaming()
+        {
+            if (stream_file_header_pos_ >= 0) throw std::logic_error("Can't add new file while adding streaming data isn't completed");
+            if (mode_ != output_mode::file_output) throw std::logic_error(__func__ + " only supports output mode file"s);
+
+            // write empty header
+            stream_file_header_pos_ = file_.tellg();
+            block_t header {};
+            write(header);
+        }
+
+        void add_file_streaming_data(const char* const data, std::streamsize size)
+        {
+            unsigned long pos = 0;
+            block_t block;
+
+            // fill a new block with old and new data if enough data
+            // is available to fill a whole block
+            if ((stream_block_used_ + size) >= BLOCK_SIZE) {
+                // copy saved data
+                std::copy_n(stream_block_.data(), stream_block_used_, block.data());
+
+                // copy from new data
+                const auto copy_from_new_data = BLOCK_SIZE - stream_block_used_;
+                std::copy_n(data, copy_from_new_data, block.data() + stream_block_used_);
+
+                // write new complete block
+                write(block);
+
+                pos += copy_from_new_data;
+                size -= copy_from_new_data;
+                stream_block_used_ = 0;
+            }
+
+            // write new block as long as we have enough data to fill a whole block
+            while (size >= BLOCK_SIZE) {
+                std::copy_n(data + pos, BLOCK_SIZE, block.data());
+                pos += BLOCK_SIZE;
+                size -= BLOCK_SIZE;
+                write(block);
+            }
+
+            // store remaining data for next call or stream_file_complete
+            std::copy_n(data + pos, size, stream_block_.data() + stream_block_used_);
+            stream_block_used_ += size;
+        }
+
+#ifdef __linux
+        void stream_file_complete(const std::string& filename, __mode_t mode, __uid_t uid, __gid_t gid, __off_t size, __time_t mod_time)
+        {
+            // create last block, 0 init to ensure correctness if size < block size
+            block_t block {};
+            std::copy_n(stream_block_.data(), block.size(), block.data());
+            stream_block_used_ = 0;
+            write(block);
+
+            const auto stream_pos = file_.tellp();
+
+            // seek to header
+            file_.seekp(stream_file_header_pos_);
+            write_header(filename, mode, uid, gid, size, mod_time);
+            stream_file_header_pos_ = -1;
+
+            file_.seekp(stream_pos);
+        }
+#endif
+
     private:
+        static constexpr unsigned int HEADER_POS_MODE = 100U;
+        static constexpr unsigned int HEADER_POS_UID = 108U;
+        static constexpr unsigned int HEADER_POS_GID = 116U;
+        static constexpr unsigned int HEADER_POS_SIZE = 124U;
+        static constexpr unsigned int HEADER_POS_MTIM = 136U;
+        static constexpr unsigned int HEADER_LEN_MODE = 7U;
+        static constexpr unsigned int HEADER_LEN_UID = 7U;
+        static constexpr unsigned int HEADER_LEN_GID = 7U;
+        static constexpr unsigned int HEADER_LEN_SIZE = 11U;
+        static constexpr unsigned int HEADER_LEN_MTIM = 11U;
+
         void write(const block_t& data)
         {
             if (!is_open()) return;
@@ -136,23 +221,40 @@ namespace tarxx {
 
         void write_header(const std::string& filename)
         {
+#ifdef __linux
+            // clang-format off
+            struct ::stat buffer {};
+            // clang-format on
+            const auto stat_result = ::stat(filename.c_str(), &buffer);
+            if (stat_result != 0) {
+                throw errno_exception();
+            }
+
+            write_header(filename, buffer.st_mode & ALLPERMS, buffer.st_uid, buffer.st_gid, buffer.st_size, buffer.st_mtim.tv_sec);
+#endif
+        }
+
+#ifdef __linux
+        void write_header(const std::string& filename, __mode_t mode, __uid_t uid, __gid_t gid, __off_t size, __time_t time)
+        {
             if (type_ != tar_type::unix_v7) throw std::logic_error("unsupported tar format");
 
             block_t header {};
 
             write_into_block(header, filename, 0, 100);
 
-#ifdef __linux
+            // clang-format off
             struct ::stat buffer {};
+            // clang-format on
             const auto stat_result = ::stat(filename.c_str(), &buffer);
             if (stat_result != 0) {
                 throw errno_exception();
             }
-            write_into_block(header, buffer.st_mode & ALLPERMS, 100, 7);
-            write_into_block(header, buffer.st_uid, 108, 7);
-            write_into_block(header, buffer.st_gid, 116, 7);
-            write_into_block(header, buffer.st_size, 124, 11);
-            write_into_block(header, buffer.st_mtim.tv_sec, 136, 11);
+            write_into_block(header, mode, HEADER_POS_MODE, HEADER_LEN_MODE);
+            write_into_block(header, uid, HEADER_POS_UID, HEADER_LEN_UID);
+            write_into_block(header, gid, HEADER_POS_GID, HEADER_LEN_GID);
+            write_into_block(header, size, HEADER_POS_SIZE, HEADER_LEN_SIZE);
+            write_into_block(header, time, HEADER_POS_MTIM, HEADER_LEN_MTIM);
 
             //TODO link indicator (file type)
             //TODO name of linked file
@@ -201,6 +303,9 @@ namespace tarxx {
         output_mode mode_;
         std::fstream file_;
         callback_t callback_;
+        long stream_file_header_pos_;
+        block_t stream_block_;
+        size_t stream_block_used_;
     };
 
 } // namespace tarxx
