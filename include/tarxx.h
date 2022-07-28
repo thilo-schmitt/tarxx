@@ -27,6 +27,7 @@
 #ifndef TARXX_TARXX_H_F498949DFCF643A3B77C60CF3AA29F36
 #define TARXX_TARXX_H_F498949DFCF643A3B77C60CF3AA29F36
 
+#include <lz4frame_static.h>
 
 #include <algorithm>
 #include <array>
@@ -35,7 +36,6 @@
 #include <functional>
 #include <iomanip>
 #include <iostream>
-#include <lz4frame_static.h>
 #include <sstream>
 #include <stdexcept>
 #include <string>
