@@ -18,21 +18,26 @@ else()
 endif()
 
 if (WITH_LZ4)
-    target_compile_definitions(${LIB_NAME} INTERFACE ENABLE_LZ4=ON)
+    target_compile_definitions(${LIB_NAME} INTERFACE WITH_LZ4=ON WITH_COMPRESSION=ON)
 
     find_package(PkgConfig REQUIRED)
     find_library(LZ4_LIBRARY
-            NAMES lz4_static
+            NAMES lz4 lz4_static
             PATHS ${LZ4_LIBRARY_DIRS} ${LZ4_INCLUDE_DIRS}
             REQUIRED)
 endif()
 
-message(${LZ4_LIBRARY_DIRS})
+
 if (WITH_EXAMPLE)
     add_executable(tarxx-example tarxx-example.cpp)
     set_target_properties(tarxx-example PROPERTIES
             CXX_STANDARD 17
             CXX_STANDARD_REQUIRED ON
             CXX_EXTENSIONS OFF)
+    set(EXAMPLE_LIBS "tarxx")
+    if (WITH_LZ4)
+        list(WITH_EXAMPLE APPEND lz)
+    endif()
+    target_link_libraries(tarxx-example ${EXAMPLE_LIBS})
+
 endif()
-target_link_libraries(tarxx-example tarxx lz4)

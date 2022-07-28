@@ -1,4 +1,4 @@
-name: CMake
+name: example without compression
 
 on:
   push:
@@ -19,8 +19,6 @@ jobs:
 
     steps:
       - uses: actions/checkout@v3
-        with:
-          submodules: 'recursive'
 
       - name: Install packages
         run: sudo apt-get -y install gcc g++ cmake

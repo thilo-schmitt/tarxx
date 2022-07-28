@@ -57,23 +57,40 @@ static int tar_files_in(
     return 0;
 }
 
-static int tar_files_in_stream_out(std::ostream& os,
-                                   const std::vector<std::string>& input_files,
-                                   const tarxx::tarfile::compression_mode& compression_mode)
+#ifdef WITH_COMPRESSION
+static int tar_files_in_stream_out(std::ostream& os, const std::vector<std::string>& input_files, const tarxx::tarfile::compression_mode& compression_mode)
+#else
+static int tar_files_in_stream_out(std::ostream& os, const std::vector<std::string>& input_files)
+#endif
+
 {
 
     tarxx::tarfile::callback_t cb = [&](const tarxx::block_t& block, const size_t size) {
         os.write(block.data(), size);
     };
+
+#ifdef WITH_COMPRESSION
     tarxx::tarfile tar(std::move(cb), compression_mode);
+#else
+    tarxx::tarfile tar(std::move(cb));
+#endif
+
     return tar_files_in(tar, input_files);
 }
 
-static int tar_files_in_file_out(const std::string& output_file,
-                                 const std::vector<std::string>& input_files,
-                                 const tarxx::tarfile::compression_mode& compression_mode)
+#ifdef WITH_COMPRESSION
+static int tar_files_in_file_out(const std::string& output_file, const std::vector<std::string>& input_files, const tarxx::tarfile::compression_mode& compression_mode)
+#else
+static int tar_files_in_file_out(const std::string& output_file, const std::vector<std::string>& input_files)
+#endif
 {
+
+#ifdef WITH_COMPRESSION
     tarxx::tarfile tar(output_file, compression_mode);
+#else
+    tarxx::tarfile tar(output_file);
+#endif
+
     return tar_files_in(tar, input_files);
 }
 
@@ -98,50 +115,79 @@ static int tar_stream_in(tarxx::tarfile& tar)
 #endif
     return 0;
 }
-
-static int tar_stream_in_file_out(const std::string& output_file,
-                                  const tarxx::tarfile::compression_mode& compression_mode)
+#ifdef WITH_COMPRESSION
+static int tar_stream_in_file_out(const std::string& output_file, const tarxx::tarfile::compression_mode& compression_mode)
+#else
+static int tar_stream_in_file_out(const std::string& output_file)
+#endif
 {
+
+#ifdef WITH_COMPRESSION
     tarxx::tarfile tar(output_file, compression_mode);
+#else
+    tarxx::tarfile tar(output_file);
+#endif
+
     return tar_stream_in(tar);
 }
 
-static int tar_stream_in_stream_out(std::ostream& os,
-                                    const tarxx::tarfile::compression_mode& compression_mode)
+
+#ifdef WITH_COMPRESSION
+static int tar_stream_in_stream_out(std::ostream& os, const tarxx::tarfile::compression_mode& compression_mode)
+#else
+static int tar_stream_in_stream_out(std::ostream& os)
+#endif
 {
     tarxx::tarfile::callback_t cb = [&](const tarxx::block_t& block, const size_t size) {
         os.write(block.data(), size);
     };
 
+#ifdef WITH_COMPRESSION
     tarxx::tarfile tar(std::move(cb), compression_mode);
+#else
+    tarxx::tarfile tar(std::move(cb));
+#endif
     return tar_stream_in(tar);
 }
 
 static bool std_out_redirected()
 {
+#ifdef __linux
     return isatty(fileno(stdout)) == 0;
+#endif
 }
 
 static bool std_in_redirected()
 {
+#ifdef __linux
     return isatty(fileno(stdin)) == 0;
+#endif
 }
 
 
 int main(const int argc, char* const* const argv)
 {
     int opt;
+#ifdef WITH_COMPRESSION
     auto compress = false;
+#endif
     auto create = false;
     std::string filename;
 
-    while ((opt = getopt(argc, argv, "kf:c")) != -1) {
+    std::string shortOpts = "f:c";
+#ifdef WITH_LZ4
+    shortOpts += 'k';
+#endif
+#ifdef __linux
+    while ((opt = getopt(argc, argv, shortOpts.c_str())) != -1) {
         switch (opt) {
             case 'c':
                 create = true;
                 break;
+#ifdef WITH_LZ4
             case 'k':
                 compress = true;
+#endif
                 break;
             case 'f':
                 filename = optarg;
@@ -156,6 +202,7 @@ int main(const int argc, char* const* const argv)
                 return EXIT_FAILURE;
         }
     }
+#endif
 
     if (!create) {
         std::cerr << "Unpacking archives is not support yet\n";
@@ -173,15 +220,27 @@ int main(const int argc, char* const* const argv)
     }
 
     try {
+#ifdef WITH_LZ4
+        // todo support other compression modes here
         const auto compression_mode = compress
                                               ? tarxx::tarfile::compression_mode::lz4
                                               : tarxx::tarfile::compression_mode::none;
+#endif
 
         if (std_in_redirected()) {
             if (std_out_redirected()) {
+#ifdef WITH_COMPRESSION
                 return tar_stream_in_stream_out(std::cout, compression_mode);
+#else
+                return tar_stream_in_stream_out(std::cout);
+#endif
             }
+
+#ifdef WITH_COMPRESSION
             return tar_stream_in_file_out(filename, compression_mode);
+#else
+            return tar_stream_in_file_out(filename);
+#endif
         }
 
         std::vector<std::string> input_files;
@@ -203,10 +262,19 @@ int main(const int argc, char* const* const argv)
         }
 
         if (std_out_redirected()) {
+#ifdef WITH_COMPRESSION
             return tar_files_in_stream_out(std::cout, input_files, compression_mode);
+#else
+            return tar_files_in_stream_out(std::cout, input_files);
+#endif
         }
 
+#ifdef WITH_COMPRESSION
         return tar_files_in_file_out(filename, input_files, compression_mode);
+#else
+        return tar_files_in_file_out(filename, input_files);
+#endif
+
     } catch (std::exception& ex) {
         std::cerr << "Failed to create tar archive: " << ex.what() << "\n";
     }
