@@ -184,7 +184,7 @@ namespace tarxx {
             }
 #endif
 
-            // write emtpy header
+            // write empty header
             stream_file_header_pos_ = file_.tellg();
             block_t header {};
             write(header, true);
@@ -253,16 +253,6 @@ namespace tarxx {
 #endif
 
     private:
-        template<typename F, typename... Args>
-        auto lz4_check_error(F&& func, Args&&... args)
-        {
-            const auto lz4_result = func(std::forward<Args>(args)...);
-            if (LZ4F_isError(lz4_result) != 0) {
-                throw std::runtime_error("lz4 function failed: error "s + LZ4F_getErrorName(lz4_result));
-            }
-            return lz4_result;
-        }
-
         static constexpr unsigned int HEADER_POS_MODE = 100U;
         static constexpr unsigned int HEADER_POS_UID = 108U;
         static constexpr unsigned int HEADER_POS_GID = 116U;
@@ -273,11 +263,22 @@ namespace tarxx {
         static constexpr unsigned int HEADER_LEN_GID = 7U;
         static constexpr unsigned int HEADER_LEN_SIZE = 11U;
         static constexpr unsigned int HEADER_LEN_MTIM = 11U;
+
 #ifdef WITH_LZ4
+        template<typename F, typename... Args>
+        auto lz4_call_and_check_error(F&& func, Args&&... args)
+        {
+            const auto lz4_result = func(std::forward<Args>(args)...);
+            if (LZ4F_isError(lz4_result) != 0) {
+                throw std::runtime_error("lz4 function failed: error "s + LZ4F_getErrorName(lz4_result));
+            }
+            return lz4_result;
+        }
+
         void lz4_flush()
         {
-            lz4_out_buf_pos_ += lz4_check_error(LZ4F_flush, lz4_ctx_->get(), lz4_out_buf_.data(), lz4_out_buf_.capacity(), nullptr);
-            const auto lz4_result = lz4_check_error(LZ4F_flush, lz4_ctx_->get(), lz4_out_buf_.data(), lz4_out_buf_.capacity(), nullptr);
+            lz4_out_buf_pos_ += lz4_call_and_check_error(LZ4F_flush, lz4_ctx_->get(), lz4_out_buf_.data(), lz4_out_buf_.capacity(), nullptr);
+            const auto lz4_result = lz4_call_and_check_error(LZ4F_flush, lz4_ctx_->get(), lz4_out_buf_.data(), lz4_out_buf_.capacity(), nullptr);
             lz4_out_buf_pos_ += lz4_result;
             write_lz4_data();
         }
@@ -286,24 +287,24 @@ namespace tarxx {
         void write(const block_t& data, bool is_header = false)
         {
             if (!is_open()) return;
-#ifdef WITH_COMPRESSION
-#    ifdef WITH_LZ4
+#ifdef WITH_LZ4
             if (compression_ == compression_mode::lz4) {
                 if (is_header) {
-                    const auto lz4_result = lz4_check_error(LZ4F_uncompressedUpdate, lz4_ctx_->get(), lz4_out_buf_.data(), lz4_out_buf_.capacity(),
+                    const auto lz4_result = lz4_call_and_check_error(LZ4F_uncompressedUpdate, lz4_ctx_->get(), lz4_out_buf_.data(), lz4_out_buf_.capacity(),
                                                             data.data(), data.size(), nullptr);
 
                     lz4_out_buf_pos_ += lz4_result;
                     // flush is necessary to keep lz4_out_buf_pos_ consistent
                     lz4_flush();
                 } else {
-                    const auto lz4_result = lz4_check_error(LZ4F_compressUpdate, lz4_ctx_->get(), lz4_out_buf_.data(), lz4_out_buf_.capacity(),
+                    const auto lz4_result = lz4_call_and_check_error(LZ4F_compressUpdate, lz4_ctx_->get(), lz4_out_buf_.data(), lz4_out_buf_.capacity(),
                                                             data.data(), data.size(), nullptr);
                     lz4_out_buf_pos_ += lz4_result;
                 }
                 write_lz4_data();
             } else {
-#    endif
+#else
+            static_cast<void>(is_header);
 #endif
                 switch (mode_) {
                     case output_mode::stream_output:
@@ -311,7 +312,7 @@ namespace tarxx {
                         break;
                     case output_mode::file_output:
                         file_.write(data.data(), data.size());
-                        file_.flush(); // todo remove this
+                       // file_.flush(); // todo remove this
                         break;
                 }
 #ifdef WITH_LZ4
@@ -327,7 +328,7 @@ namespace tarxx {
 
 #ifdef WITH_LZ4
             if (compression_ == compression_mode::lz4 && lz4_ctx_ != nullptr) {
-                const auto lz4_result = lz4_check_error(LZ4F_compressEnd,
+                const auto lz4_result = lz4_call_and_check_error(LZ4F_compressEnd,
                                                         lz4_ctx_->get(), lz4_out_buf_.data(), lz4_out_buf_.capacity(), nullptr);
 
                 lz4_out_buf_pos_ += lz4_result;
@@ -410,10 +411,10 @@ namespace tarxx {
             }
 
             lz4_ctx_ = std::make_unique<lz4_ctx>();
-            const auto outbuf_size = lz4_check_error(LZ4F_compressBound, 16 * 1024, &lz4_prefs_);
+            const auto outbuf_size = lz4_call_and_check_error(LZ4F_compressBound, 16 * 1024, &lz4_prefs_);
 
             lz4_out_buf_.reserve(outbuf_size);
-            const auto headerSize = lz4_check_error(LZ4F_compressBegin, lz4_ctx_->get(), lz4_out_buf_.data(), lz4_out_buf_.capacity(), &lz4_prefs_);
+            const auto headerSize = lz4_call_and_check_error(LZ4F_compressBegin, lz4_ctx_->get(), lz4_out_buf_.data(), lz4_out_buf_.capacity(), &lz4_prefs_);
             lz4_out_buf_pos_ += headerSize;
             write_lz4_data();
         }

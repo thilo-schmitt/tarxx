@@ -25,14 +25,15 @@
 
 #include "tarxx.h"
 #include <filesystem>
-#include <getopt.h>
 #include <iostream>
 #include <string>
 #include <vector>
 
 #if __linux
-#    include <thread>
+#    include <getopt.h>
 #    include <unistd.h>
+#else
+#    error "no support for targeted platform"
 #endif
 
 static int tar_files_in(
@@ -184,11 +185,11 @@ int main(const int argc, char* const* const argv)
             case 'c':
                 create = true;
                 break;
-#ifdef WITH_LZ4
+#    ifdef WITH_LZ4
             case 'k':
                 compress = true;
                 break;
-#endif
+#    endif
             case 'f':
                 filename = optarg;
                 break;
@@ -205,7 +206,7 @@ int main(const int argc, char* const* const argv)
 #endif
 
     if (!create) {
-        std::cerr << "Unpacking archives is not support yet\n";
+        std::cerr << "Unpacking archives is not supported yet\n";
         return EXIT_FAILURE;
     }
 
@@ -221,13 +222,13 @@ int main(const int argc, char* const* const argv)
 
     try {
 #ifdef WITH_COMPRESSION
-#ifdef WITH_LZ4
+#    ifdef WITH_LZ4
         const auto compression_mode = compress
                                               ? tarxx::tarfile::compression_mode::lz4
                                               : tarxx::tarfile::compression_mode::none;
-#else
+#    else
         const auto compression_mode = tarxx::tarfile::compression_mode::none;
-#endif
+#    endif
 #endif
 
         if (std_in_redirected()) {

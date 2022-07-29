@@ -21,14 +21,14 @@ jobs:
       - uses: actions/checkout@v3
 
       - name: Install packages
-        run: sudo apt-get -y install gcc g++ cmake git
+        run: sudo apt-get -y install gcc g++ cmake git pkg-config
 
       - name: Install lz4
         env:
           LZ4_DIR: ../lz4/
         run: |
           git clone https://github.com/lz4/lz4 $LZ4_DIR
-          pushd $LZ4_DIR
+          pushd $LZ4_DIR  
           sudo make install
           popd
 

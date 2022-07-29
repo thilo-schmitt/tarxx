@@ -1,6 +1,10 @@
 cmake_minimum_required(VERSION 3.8)
 project(tarxx VERSION 0.1.0 LANGUAGES CXX)
 
+IF (WIN32)
+    message(FATAL_ERROR Windows is not support at the moment)
+ENDIF()
+
 option(WITH_LZ4 "Set to ON to enable LZ4 compression support" OFF)
 option(WITH_COMPRESSION "Set to ON to enable compression support without any algorithms" OFF)
 option(WITH_EXAMPLE "Set to ON to build the example" OFF)
@@ -8,6 +12,7 @@ option(WITH_EXAMPLE "Set to ON to build the example" OFF)
 set(LIB_NAME tarxx)
 set(${LIB_NAME}_COMPILE_DEFINITIONS "")
 set(${LIB_NAME}_LINK_LIBRARIES "")
+set(${LIB_NAME}_INCLUDE_DIRECTORIES "")
 
 
 add_library(${LIB_NAME} INTERFACE)
@@ -26,19 +31,17 @@ if (WITH_COMPRESSION OR WITH_LZ4)
 endif()
 
 if (WITH_LZ4)
-    list(APPEND ${LIB_NAME}_COMPILE_DEFINITIONS WITH_LZ4=ON)
-    list(APPEND ${LIB_NAME}_LINK_LIBRARIES lz4)
-
     find_package(PkgConfig REQUIRED)
-    find_library(LZ4_LIBRARY
-            NAMES lz4 lz4_static
-            PATHS ${LZ4_LIBRARY_DIRS} ${LZ4_INCLUDE_DIRS}
-            REQUIRED)
+    find_library(NAME liblz4.a)
 
+    list(APPEND ${LIB_NAME}_COMPILE_DEFINITIONS WITH_LZ4=ON)
+    list(APPEND ${LIB_NAME}_LINK_LIBRARIES lz4.a)
+    list(APPEND ${LIB_NAME}_INCLUDE_DIRECTORIES ${LZ4_INCLUDE_DIRS})
 endif()
 
 target_compile_definitions(${LIB_NAME} INTERFACE ${${LIB_NAME}_COMPILE_DEFINITIONS})
 target_link_libraries(${LIB_NAME} INTERFACE ${${LIB_NAME}_LINK_LIBRARIES})
+target_include_directories(${LIB_NAME} INTERFACE ${${LIB_NAME}_INCLUDE_DIRECTORIES})
 
 if (WITH_EXAMPLE)
     set(EXAMPLE_NAME tarxx-example)
