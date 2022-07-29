@@ -187,8 +187,8 @@ int main(const int argc, char* const* const argv)
 #ifdef WITH_LZ4
             case 'k':
                 compress = true;
-#endif
                 break;
+#endif
             case 'f':
                 filename = optarg;
                 break;
@@ -220,11 +220,14 @@ int main(const int argc, char* const* const argv)
     }
 
     try {
+#ifdef WITH_COMPRESSION
 #ifdef WITH_LZ4
-        // todo support other compression modes here
         const auto compression_mode = compress
                                               ? tarxx::tarfile::compression_mode::lz4
                                               : tarxx::tarfile::compression_mode::none;
+#else
+        const auto compression_mode = tarxx::tarfile::compression_mode::none;
+#endif
 #endif
 
         if (std_in_redirected()) {

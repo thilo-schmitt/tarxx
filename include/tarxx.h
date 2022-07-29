@@ -76,50 +76,53 @@ namespace tarxx {
             //TODO support for utar, star, etc.
         };
 
+        using callback_t = std::function<void(const block_t&, size_t size)>;
+
 #ifdef WITH_COMPRESSION
         enum class compression_mode : unsigned {
             none,
-#ifdef WITH_LZ4
+#    ifdef WITH_LZ4
             lz4,
-#endif
+#    endif
         };
-#endif
-        using callback_t = std::function<void(const block_t&, size_t size)>;
-
 
         tarfile(const std::string& filename,
-#ifdef WITH_COMPRESSION
                 compression_mode compression,
-#endif
                 tar_type type = tar_type::unix_v7)
             : file_(filename, std::ios::out | std::ios::binary),
               callback_(nullptr), mode_(output_mode::file_output),
-#ifdef WITH_COMPRESSION
               compression_(compression),
-#endif
-              type_(type), stream_file_header_pos_(-1), stream_block_{0}, stream_block_used_(0)
+              type_(type), stream_file_header_pos_(-1), stream_block_ {0}, stream_block_used_(0)
         {
-#ifdef WITH_LZ4
+#    ifdef WITH_LZ4
             init_lz4();
-#endif
+#    endif
         }
 
         tarfile(callback_t&& callback,
-#ifdef WITH_COMPRESSION
                 compression_mode compression,
-#endif
                 tar_type type = tar_type::unix_v7)
             : file_(), callback_(std::move(callback)), mode_(output_mode::stream_output),
-#ifdef WITH_COMPRESSION
               compression_(compression),
-#endif
-              type_(type), stream_file_header_pos_(-1), stream_block_{0}, stream_block_used_(0)
+              type_(type), stream_file_header_pos_(-1), stream_block_ {0}, stream_block_used_(0)
         {
-#ifdef WITH_LZ4
+#    ifdef WITH_LZ4
             init_lz4();
+#    endif
+        }
 #endif
+
+        explicit tarfile(const std::string& filename, tar_type type = tar_type::unix_v7)
+            : file_(filename, std::ios::out | std::ios::binary), callback_(nullptr), mode_(output_mode::file_output), type_(type), stream_block_ {0}, stream_file_header_pos_(-1), stream_block_used_(0)
+        {
         }
 
+        explicit tarfile(callback_t&& callback,
+                         tar_type type = tar_type::unix_v7)
+            : file_(), callback_(std::move(callback)), mode_(output_mode::stream_output),
+              type_(type), stream_file_header_pos_(-1), stream_block_ {0}, stream_block_used_(0)
+        {
+        }
 
         ~tarfile()
         {
@@ -150,7 +153,7 @@ namespace tarxx {
         void add_file(const std::string& filename)
         {
             if (stream_file_header_pos_ >= 0) throw std::logic_error("Can't add new file while adding streaming data isn't completed");
-            // flush is necessary to get the correct position of the header
+                // flush is necessary to get the correct position of the header
 #ifdef WITH_LZ4
             if (compression_ == compression_mode::lz4) {
                 lz4_flush();
@@ -174,7 +177,7 @@ namespace tarxx {
             if (stream_file_header_pos_ >= 0) throw std::logic_error("Can't add new file while adding streaming data isn't completed");
             if (mode_ != output_mode::file_output) throw std::logic_error(__func__ + " only supports output mode file"s);
 
-            // flush is necessary to get the correct position of the header
+                // flush is necessary to get the correct position of the header
 #ifdef WITH_LZ4
             if (compression_ == compression_mode::lz4) {
                 lz4_flush();
@@ -233,11 +236,11 @@ namespace tarxx {
             write(block);
 
             // flush is necessary so seek to the correct positions
-#ifdef WITH_LZ4
+#    ifdef WITH_LZ4
             if (compression_ == compression_mode::lz4) {
                 lz4_flush();
             }
-#endif
+#    endif
 
             // seek to header
             const auto stream_pos = file_.tellp();
@@ -284,7 +287,7 @@ namespace tarxx {
         {
             if (!is_open()) return;
 #ifdef WITH_COMPRESSION
-#ifdef WITH_LZ4
+#    ifdef WITH_LZ4
             if (compression_ == compression_mode::lz4) {
                 if (is_header) {
                     const auto lz4_result = lz4_check_error(LZ4F_uncompressedUpdate, lz4_ctx_->get(), lz4_out_buf_.data(), lz4_out_buf_.capacity(),
@@ -299,8 +302,8 @@ namespace tarxx {
                     lz4_out_buf_pos_ += lz4_result;
                 }
                 write_lz4_data();
-#endif
             } else {
+#    endif
 #endif
                 switch (mode_) {
                     case output_mode::stream_output:
@@ -311,7 +314,7 @@ namespace tarxx {
                         file_.flush(); // todo remove this
                         break;
                 }
-#ifdef WITH_COMPRESSION
+#ifdef WITH_LZ4
             }
 #endif
         }
@@ -414,9 +417,6 @@ namespace tarxx {
             lz4_out_buf_pos_ += headerSize;
             write_lz4_data();
         }
-#endif
-
-#ifdef WITH_LZ4
         void write_lz4_data()
         {
             unsigned long long offset = 0;
@@ -459,7 +459,7 @@ namespace tarxx {
         size_t stream_block_used_;
 
 #ifdef WITH_COMPRESSION
-        compression_mode compression_;
+        compression_mode compression_ = compression_mode::none;
 #endif
 
 #ifdef WITH_LZ4
