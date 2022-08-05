@@ -11,7 +11,20 @@ get more complete over time and it might get more polished over
 time - in every aspect of it.
 
 
+## Contributors
+
+A big thank you for contributions by
+* Alexander Mohr, Mercedes-Benz Tech Innovation GmbH
+
+
 ## Version history
+
+### 0.2.0
+
+- support for adding in-memory data to the archive as a file
+- general enabling for compressed archives
+- lz4 compression support
+- automated CI builds through github
 
 ### 0.1.0
 
@@ -30,3 +43,7 @@ time - in every aspect of it.
 
 This work is licensed under the BSD 2-Clasue License.
 See [LICENSE](LICENSE) for details.
+
+For the optional lz4 compression support, the lz4 library
+by Yann Collet is being used. See [LZ4_LICENSE](LZ4_LICENSE)
+for lz4 licensing details.

@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.8)
-project(tarxx VERSION 0.1.0 LANGUAGES CXX)
+project(tarxx VERSION 0.2.0 LANGUAGES CXX)
 
 IF (WIN32)
     message(FATAL_ERROR Windows is not support at the moment)
