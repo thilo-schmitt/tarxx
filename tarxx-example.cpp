@@ -23,48 +23,263 @@
 // OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 // OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
-
 #include "tarxx.h"
+#include <filesystem>
+#include <iostream>
+#include <string>
+#include <vector>
 
-int tar_file_mode(const int argc, const char* const* const argv)
+#if __linux
+#    include <getopt.h>
+#    include <unistd.h>
+#else
+#    error "no support for targeted platform"
+#endif
+
+static int tar_files_in(
+        tarxx::tarfile& tar,
+        const std::vector<std::string>& input_files)
 {
-    if (argc < 2) return 1;
-    tarxx::tarfile tar(argv[1] + std::string("_file.tar"));
     if (!tar.is_open()) return 2;
-    for (unsigned i = 2; i < argc; ++i) {
-        tar.add_file(argv[i]);
+    for (const auto& file : input_files) {
+        std::filesystem::path path(file);
+        if (is_directory(path)) {
+            for (const auto& dir_entry :
+                 std::filesystem::recursive_directory_iterator(path)) {
+                if (!is_directory(dir_entry)) {
+                    tar.add_file(dir_entry.path());
+                }
+            }
+        } else {
+            tar.add_file(path);
+        }
     }
+
     return 0;
 }
 
-int tar_streaming_mode(const int argc, const char* const* const argv)
-{
-    if (argc < 2) return 1;
-    tarxx::tarfile tar(argv[1] + std::string("_stream.tar"));
-    if (!tar.is_open()) return 2;
-    for (unsigned i = 2; i < argc; ++i) {
-        tar.add_file_streaming();
-        std::ifstream infile(argv[i], std::ios::binary);
-        std::array<char, 1466> buf {};
-        std::streamsize file_size = 0;
+#ifdef WITH_COMPRESSION
+static int tar_files_in_stream_out(std::ostream& os, const std::vector<std::string>& input_files, const tarxx::tarfile::compression_mode& compression_mode)
+#else
+static int tar_files_in_stream_out(std::ostream& os, const std::vector<std::string>& input_files)
+#endif
 
-        while (infile.good()) {
-            infile.read(buf.data(), buf.size());
-            const auto read = infile.gcount();
-            file_size += read;
-            tar.add_file_streaming_data(buf.data(), read);
+{
+
+    tarxx::tarfile::callback_t cb = [&](const tarxx::block_t& block, const size_t size) {
+        os.write(block.data(), size);
+    };
+
+#ifdef WITH_COMPRESSION
+    tarxx::tarfile tar(std::move(cb), compression_mode);
+#else
+    tarxx::tarfile tar(std::move(cb));
+#endif
+
+    return tar_files_in(tar, input_files);
+}
+
+#ifdef WITH_COMPRESSION
+static int tar_files_in_file_out(const std::string& output_file, const std::vector<std::string>& input_files, const tarxx::tarfile::compression_mode& compression_mode)
+#else
+static int tar_files_in_file_out(const std::string& output_file, const std::vector<std::string>& input_files)
+#endif
+{
+
+#ifdef WITH_COMPRESSION
+    tarxx::tarfile tar(output_file, compression_mode);
+#else
+    tarxx::tarfile tar(output_file);
+#endif
+
+    return tar_files_in(tar, input_files);
+}
+
+static int tar_stream_in(tarxx::tarfile& tar)
+{
+    if (!tar.is_open()) return 2;
+
+    std::array<char, 1> input_buff {};
+    long long total_size = 0;
+    tar.add_file_streaming();
+
+    while (std::cin.read(input_buff.data(), input_buff.size())) {
+        const auto read_bytes = std::cin.gcount();
+        total_size += read_bytes;
+        tar.add_file_streaming_data(input_buff.data(), read_bytes);
+    }
+
+    std::time_t result = std::time(nullptr);
+
+#if __linux
+    tar.stream_file_complete("stdin", 0777, getuid(), getgid(), total_size, result);
+#endif
+    return 0;
+}
+#ifdef WITH_COMPRESSION
+static int tar_stream_in_file_out(const std::string& output_file, const tarxx::tarfile::compression_mode& compression_mode)
+#else
+static int tar_stream_in_file_out(const std::string& output_file)
+#endif
+{
+
+#ifdef WITH_COMPRESSION
+    tarxx::tarfile tar(output_file, compression_mode);
+#else
+    tarxx::tarfile tar(output_file);
+#endif
+
+    return tar_stream_in(tar);
+}
+
+
+#ifdef WITH_COMPRESSION
+static int tar_stream_in_stream_out(std::ostream& os, const tarxx::tarfile::compression_mode& compression_mode)
+#else
+static int tar_stream_in_stream_out(std::ostream& os)
+#endif
+{
+    tarxx::tarfile::callback_t cb = [&](const tarxx::block_t& block, const size_t size) {
+        os.write(block.data(), size);
+    };
+
+#ifdef WITH_COMPRESSION
+    tarxx::tarfile tar(std::move(cb), compression_mode);
+#else
+    tarxx::tarfile tar(std::move(cb));
+#endif
+    return tar_stream_in(tar);
+}
+
+static bool std_out_redirected()
+{
+#ifdef __linux
+    return isatty(fileno(stdout)) == 0;
+#endif
+}
+
+static bool std_in_redirected()
+{
+#ifdef __linux
+    return isatty(fileno(stdin)) == 0;
+#endif
+}
+
+
+int main(const int argc, char* const* const argv)
+{
+    int opt;
+#ifdef WITH_COMPRESSION
+    auto compress = false;
+#endif
+    auto create = false;
+    std::string filename;
+
+    std::string shortOpts = "f:c";
+#ifdef WITH_LZ4
+    shortOpts += 'k';
+#endif
+#ifdef __linux
+    while ((opt = getopt(argc, argv, shortOpts.c_str())) != -1) {
+        switch (opt) {
+            case 'c':
+                create = true;
+                break;
+#    ifdef WITH_LZ4
+            case 'k':
+                compress = true;
+                break;
+#    endif
+            case 'f':
+                filename = optarg;
+                break;
+            default:
+                std::cout << "Usage: " << argv[0]
+                          << " [OPTION]... [-f OUTPUT] [INPUT>...]\n"
+                          << "-c          create a tar archive\n"
+                          << "-k          enable lz4 compression\n"
+                          << "-f <FILES>  create tar archive from file instead of "
+                             "standard input\n";
+                return EXIT_FAILURE;
+        }
+    }
+#endif
+
+    if (!create) {
+        std::cerr << "Unpacking archives is not supported yet\n";
+        return EXIT_FAILURE;
+    }
+
+    if (!std_out_redirected() && filename.empty()) {
+        std::cerr << "Refusing to read/write archive content to terminal (missing -f option?)\n";
+        return EXIT_FAILURE;
+    }
+
+    if (std_out_redirected() && !filename.empty()) {
+        std::cerr << "Can't redirect output and use file\n";
+        return EXIT_FAILURE;
+    }
+
+    try {
+#ifdef WITH_COMPRESSION
+#    ifdef WITH_LZ4
+        const auto compression_mode = compress
+                                              ? tarxx::tarfile::compression_mode::lz4
+                                              : tarxx::tarfile::compression_mode::none;
+#    else
+        const auto compression_mode = tarxx::tarfile::compression_mode::none;
+#    endif
+#endif
+
+        if (std_in_redirected()) {
+            if (std_out_redirected()) {
+#ifdef WITH_COMPRESSION
+                return tar_stream_in_stream_out(std::cout, compression_mode);
+#else
+                return tar_stream_in_stream_out(std::cout);
+#endif
+            }
+
+#ifdef WITH_COMPRESSION
+            return tar_stream_in_file_out(filename, compression_mode);
+#else
+            return tar_stream_in_file_out(filename);
+#endif
         }
 
-        tar.stream_file_complete(argv[i], 0777, 0, 0, file_size, 0);
+        std::vector<std::string> input_files;
+        for (int i = 1; i < argc; ++i) {
+            if (std::string(argv[i]).rfind('-', 0) == 0) {
+                continue;
+            }
+
+            if (filename == argv[i]) {
+                continue;
+            }
+
+            input_files.emplace_back(argv[i]);
+        }
+
+        if (input_files.empty()) {
+            std::cerr << "Courageously refusing to create an empty archive\n";
+            return EXIT_FAILURE;
+        }
+
+        if (std_out_redirected()) {
+#ifdef WITH_COMPRESSION
+            return tar_files_in_stream_out(std::cout, input_files, compression_mode);
+#else
+            return tar_files_in_stream_out(std::cout, input_files);
+#endif
+        }
+
+#ifdef WITH_COMPRESSION
+        return tar_files_in_file_out(filename, input_files, compression_mode);
+#else
+        return tar_files_in_file_out(filename, input_files);
+#endif
+
+    } catch (std::exception& ex) {
+        std::cerr << "Failed to create tar archive: " << ex.what() << "\n";
     }
-    return 0;
-}
-
-int main(const int argc, const char* const* const argv)
-{
-    auto returnValue = tar_file_mode(argc, argv);
-    if (returnValue != 0) return returnValue;
-
-    returnValue = tar_streaming_mode(argc, argv);
-    return returnValue;
 }
