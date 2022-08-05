@@ -5,7 +5,6 @@ IF (WIN32)
     message(FATAL_ERROR Windows is not support at the moment)
 ENDIF()
 
-option(WITH_LZ4 "Set to ON to enable LZ4 compression support" OFF)
 option(WITH_COMPRESSION "Set to ON to enable compression support without any algorithms" OFF)
 option(WITH_EXAMPLE "Set to ON to build the example" OFF)
 
@@ -26,11 +25,15 @@ else()
         CXX_EXTENSIONS OFF)
 endif()
 
-if (WITH_COMPRESSION OR WITH_LZ4)
+if (WITH_COMPRESSION)
     list(APPEND ${LIB_NAME}_COMPILE_DEFINITIONS WITH_COMPRESSION=ON)
 endif()
 
 if (WITH_LZ4)
+    if (NOT WITH_COMPRESSION)
+        message(FATAL_ERROR "LZ4 option needs compression to be turned on with '-DCOMPRESSION=ON'")
+    endif()
+
     find_package(PkgConfig REQUIRED)
     find_library(NAME liblz4.a)
 

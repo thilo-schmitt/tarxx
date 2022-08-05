@@ -284,7 +284,7 @@ namespace tarxx {
         }
 #endif
 
-        void write(const block_t& data, bool is_header = false)
+        void write(const block_t& data, [[maybe_unused]] bool is_header = false)
         {
             if (!is_open()) return;
 #ifdef WITH_LZ4
@@ -303,8 +303,6 @@ namespace tarxx {
                 }
                 write_lz4_data();
             } else {
-#else
-            static_cast<void>(is_header);
 #endif
                 switch (mode_) {
                     case output_mode::stream_output:
