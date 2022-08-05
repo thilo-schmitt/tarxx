@@ -86,8 +86,8 @@ namespace tarxx {
 #    endif
         };
 
-        tarfile(const std::string& filename,
-                compression_mode compression,
+        explicit tarfile(const std::string& filename,
+                compression_mode compression = compression_mode::none,
                 tar_type type = tar_type::unix_v7)
             : file_(filename, std::ios::out | std::ios::binary),
               callback_(nullptr), mode_(output_mode::file_output),
@@ -99,8 +99,8 @@ namespace tarxx {
 #    endif
         }
 
-        tarfile(callback_t&& callback,
-                compression_mode compression,
+        explicit tarfile(callback_t&& callback,
+                compression_mode compression = compression_mode::none,
                 tar_type type = tar_type::unix_v7)
             : file_(), callback_(std::move(callback)), mode_(output_mode::stream_output),
               compression_(compression),
@@ -110,8 +110,7 @@ namespace tarxx {
             init_lz4();
 #    endif
         }
-#endif
-
+#else
         explicit tarfile(const std::string& filename, tar_type type = tar_type::unix_v7)
             : file_(filename, std::ios::out | std::ios::binary), callback_(nullptr), mode_(output_mode::file_output), type_(type), stream_block_ {0}, stream_file_header_pos_(-1), stream_block_used_(0)
         {
@@ -123,6 +122,7 @@ namespace tarxx {
               type_(type), stream_file_header_pos_(-1), stream_block_ {0}, stream_block_used_(0)
         {
         }
+#endif
 
         ~tarfile()
         {
