@@ -16,6 +16,14 @@ time - in every aspect of it.
 A big thank you for contributions by
 * Alexander Mohr, Mercedes-Benz Tech Innovation GmbH
 
+## Tests
+
+To build the tests configure the project with `-DWITH_TESTS=ON`. 
+Run tests with these commands
+```shell
+./tests/unit-tests/unit-tests 
+./tests/component-tests/component-tests
+```
 
 ## Version history
 
