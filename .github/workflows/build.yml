@@ -1,0 +1,53 @@
+name: build and test workflow
+
+on:
+  workflow_call:
+    inputs:
+      cmake_arguments:
+        required: true
+        type: string
+      install_lz4:
+        type: boolean
+        required: false
+        default: false
+
+env:
+  # Customize the CMake build type here (Release, Debug, RelWithDebInfo, etc.)
+  BUILD_TYPE: Release
+
+jobs:
+  tests:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v3
+
+      - name: Install packages
+        run: |
+          sudo apt update
+          sudo apt-get -y install cmake git pkg-config libgmock-dev libgtest-dev expect-dev g++
+
+      - name: Install lz4
+        env:
+          LZ4_DIR: ../lz4/
+        if: ${{ inputs.install_lz4 == true }}
+        run: |
+            git clone https://github.com/lz4/lz4 $LZ4_DIR
+            pushd $LZ4_DIR  
+            sudo make install
+            popd
+
+      - name: Configure CMake
+        run: cmake -B ${{github.workspace}}/build -DCMAKE_BUILD_TYPE=${{env.BUILD_TYPE}} ${{ inputs.cmake_arguments }}
+
+      - name: Build
+        # Build your program with the given configuration
+        run: cmake --build ${{github.workspace}}/build
+
+      - name: Unit tests
+        working-directory: ${{github.workspace}}/build/tests/unit-tests
+        run: ctest
+
+      - name: Component tests
+        run: unbuffer -p "${{github.workspace}}/build/tests/component-tests/component-tests"

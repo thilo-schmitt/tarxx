@@ -34,6 +34,7 @@
 #include <algorithm>
 #include <array>
 #include <chrono>
+#include <filesystem>
 #include <fstream>
 #include <functional>
 #include <iomanip>
@@ -87,8 +88,8 @@ namespace tarxx {
         };
 
         explicit tarfile(const std::string& filename,
-                compression_mode compression = compression_mode::none,
-                tar_type type = tar_type::unix_v7)
+                         compression_mode compression = compression_mode::none,
+                         tar_type type = tar_type::unix_v7)
             : file_(filename, std::ios::out | std::ios::binary),
               callback_(nullptr), mode_(output_mode::file_output),
               compression_(compression),
@@ -100,8 +101,8 @@ namespace tarxx {
         }
 
         explicit tarfile(callback_t&& callback,
-                compression_mode compression = compression_mode::none,
-                tar_type type = tar_type::unix_v7)
+                         compression_mode compression = compression_mode::none,
+                         tar_type type = tar_type::unix_v7)
             : file_(), callback_(std::move(callback)), mode_(output_mode::stream_output),
               compression_(compression),
               type_(type), stream_file_header_pos_(-1), stream_block_ {0}, stream_block_used_(0)
@@ -143,23 +144,41 @@ namespace tarxx {
         void close()
         {
             try {
-                finish();
-                if (!is_open()) file_.close();
+                if (is_open()) {
+                    finish();
+                    file_.close();
+                    callback_ = nullptr;
+                }
             } catch (const std::exception& ex) {
                 // ignore exception in destructor, as they cannot be caught.
             }
         }
 
+        void add_files_recursive(const std::filesystem::path& path)
+        {
+            if (is_directory(path)) {
+                //TODO https://github.com/thilo-schmitt/tarxx/issues/10 support for directories is missing
+                for (const auto& f : std::filesystem::recursive_directory_iterator(path)) {
+                    if (f.is_regular_file())
+                        add_file(f.path());
+                }
+            } else if (is_regular_file(path)) {
+                add_file(path);
+            } else {
+                throw std::invalid_argument(path.string() + " is neither a regular file, nor a directory");
+            }
+        }
+
         void add_file(const std::string& filename)
         {
+            if (!is_open()) throw std::logic_error("Cannot add file, tar archive is not open");
             if (stream_file_header_pos_ >= 0) throw std::logic_error("Can't add new file while adding streaming data isn't completed");
-                // flush is necessary to get the correct position of the header
+
 #ifdef WITH_LZ4
             if (compression_ == compression_mode::lz4) {
                 lz4_flush();
             }
 #endif
-
             block_t block;
             std::fstream infile(filename, std::ios::in | std::ios::binary);
             if (!infile.is_open()) throw std::runtime_error("Can't find input file " + filename);
@@ -174,10 +193,11 @@ namespace tarxx {
 
         void add_file_streaming()
         {
+            if (!is_open()) throw std::logic_error("Cannot add file, tar archive is not open");
             if (stream_file_header_pos_ >= 0) throw std::logic_error("Can't add new file while adding streaming data isn't completed");
             if (mode_ != output_mode::file_output) throw std::logic_error(__func__ + " only supports output mode file"s);
 
-                // flush is necessary to get the correct position of the header
+            // flush is necessary to get the correct position of the header
 #ifdef WITH_LZ4
             if (compression_ == compression_mode::lz4) {
                 lz4_flush();
@@ -192,6 +212,8 @@ namespace tarxx {
 
         void add_file_streaming_data(const char* const data, std::streamsize size)
         {
+            if (!is_open()) throw std::logic_error("Cannot append file, tar archive is not open");
+
             unsigned long pos = 0;
             block_t block;
 
@@ -229,6 +251,8 @@ namespace tarxx {
 #ifdef __linux
         void stream_file_complete(const std::string& filename, __mode_t mode, __uid_t uid, __gid_t gid, __off_t size, __time_t mod_time)
         {
+            if (stream_file_header_pos_ < 0) throw std::logic_error("Can't finish stream file, none is in progress");
+
             // create last block, 0 init to ensure correctness if size < block size
             block_t block {};
             std::copy_n(stream_block_.data(), stream_block_used_, block.data());
@@ -291,14 +315,14 @@ namespace tarxx {
             if (compression_ == compression_mode::lz4) {
                 if (is_header) {
                     const auto lz4_result = lz4_call_and_check_error(LZ4F_uncompressedUpdate, lz4_ctx_->get(), lz4_out_buf_.data(), lz4_out_buf_.capacity(),
-                                                            data.data(), data.size(), nullptr);
+                                                                     data.data(), data.size(), nullptr);
 
                     lz4_out_buf_pos_ += lz4_result;
                     // flush is necessary to keep lz4_out_buf_pos_ consistent
                     lz4_flush();
                 } else {
                     const auto lz4_result = lz4_call_and_check_error(LZ4F_compressUpdate, lz4_ctx_->get(), lz4_out_buf_.data(), lz4_out_buf_.capacity(),
-                                                            data.data(), data.size(), nullptr);
+                                                                     data.data(), data.size(), nullptr);
                     lz4_out_buf_pos_ += lz4_result;
                 }
                 write_lz4_data();
@@ -310,7 +334,6 @@ namespace tarxx {
                         break;
                     case output_mode::file_output:
                         file_.write(data.data(), data.size());
-                       // file_.flush(); // todo remove this
                         break;
                 }
 #ifdef WITH_LZ4
@@ -327,7 +350,7 @@ namespace tarxx {
 #ifdef WITH_LZ4
             if (compression_ == compression_mode::lz4 && lz4_ctx_ != nullptr) {
                 const auto lz4_result = lz4_call_and_check_error(LZ4F_compressEnd,
-                                                        lz4_ctx_->get(), lz4_out_buf_.data(), lz4_out_buf_.capacity(), nullptr);
+                                                                 lz4_ctx_->get(), lz4_out_buf_.data(), lz4_out_buf_.capacity(), nullptr);
 
                 lz4_out_buf_pos_ += lz4_result;
                 write_lz4_data();

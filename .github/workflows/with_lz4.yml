@@ -1,0 +1,14 @@
+name: with lz4
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  build:
+    uses: ./.github/workflows/build.yml
+    with:
+      cmake_arguments: -DWITH_EXAMPLE=ON -DWITH_COMPRESSION=ON -DWITH_LZ4=ON -DWITH_TESTS=ON
+      install_lz4: true

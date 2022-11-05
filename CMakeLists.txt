@@ -7,12 +7,14 @@ ENDIF()
 
 option(WITH_COMPRESSION "Set to ON to enable compression support without any algorithms" OFF)
 option(WITH_EXAMPLE "Set to ON to build the example" OFF)
+option(WITH_TESTS "Set to ON to build tests" OFF)
 
 set(LIB_NAME tarxx)
 set(${LIB_NAME}_COMPILE_DEFINITIONS "")
 set(${LIB_NAME}_LINK_LIBRARIES "")
 set(${LIB_NAME}_INCLUDE_DIRECTORIES "")
 
+find_package(PkgConfig REQUIRED)
 
 add_library(${LIB_NAME} INTERFACE)
 target_include_directories(${LIB_NAME} INTERFACE ${CMAKE_CURRENT_LIST_DIR}/include)
@@ -33,8 +35,6 @@ if (WITH_LZ4)
     if (NOT WITH_COMPRESSION)
         message(FATAL_ERROR "LZ4 option needs compression to be turned on with '-DCOMPRESSION=ON'")
     endif()
-
-    find_package(PkgConfig REQUIRED)
     find_library(NAME liblz4.a)
 
     list(APPEND ${LIB_NAME}_COMPILE_DEFINITIONS WITH_LZ4=ON)
@@ -56,5 +56,8 @@ if (WITH_EXAMPLE)
 
     target_link_libraries(${EXAMPLE_NAME} tarxx)
     target_compile_definitions(${EXAMPLE_NAME} PRIVATE ${${LIB_NAME}_COMPILE_DEFINITIONS})
+endif()
 
+if (WITH_TESTS)
+    add_subdirectory(tests)
 endif()
