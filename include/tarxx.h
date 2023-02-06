@@ -34,6 +34,7 @@
 #include <algorithm>
 #include <array>
 #include <chrono>
+#include <cstddef>
 #include <filesystem>
 #include <fstream>
 #include <functional>
@@ -48,6 +49,8 @@
 #if __linux
 #    include <cerrno>
 #    include <fcntl.h>
+#    include <grp.h>
+#    include <pwd.h>
 #    include <sys/stat.h>
 #    include <sys/sysmacros.h>
 #    include <sys/types.h>
@@ -73,7 +76,8 @@ namespace tarxx {
     struct tarfile {
 
         enum class tar_type {
-            unix_v7
+            unix_v7,
+            ustar,
             //TODO support for utar, star, etc.
         };
 
@@ -86,6 +90,17 @@ namespace tarxx {
             lz4,
 #    endif
         };
+
+        explicit tarfile(const std::string& filename,
+                         tar_type type = tar_type::unix_v7)
+            : tarfile(filename, compression_mode::none, type)
+        {
+        }
+        explicit tarfile(callback_t&& callback,
+                         tar_type type = tar_type::unix_v7)
+            : tarfile(std::move(callback), compression_mode::none, type)
+        {
+        }
 
         explicit tarfile(const std::string& filename,
                          compression_mode compression = compression_mode::none,
@@ -154,6 +169,7 @@ namespace tarxx {
             }
         }
 
+#ifdef __cpp_lib_filesystem
         void add_files_recursive(const std::filesystem::path& path)
         {
             if (is_directory(path)) {
@@ -168,11 +184,11 @@ namespace tarxx {
                 throw std::invalid_argument(path.string() + " is neither a regular file, nor a directory");
             }
         }
-
+#endif
+        // TODO add support for adding directories
         void add_file(const std::string& filename)
         {
-            if (!is_open()) throw std::logic_error("Cannot add file, tar archive is not open");
-            if (stream_file_header_pos_ >= 0) throw std::logic_error("Can't add new file while adding streaming data isn't completed");
+            check_state();
 
 #ifdef WITH_LZ4
             if (compression_ == compression_mode::lz4) {
@@ -182,7 +198,7 @@ namespace tarxx {
             block_t block;
             std::fstream infile(filename, std::ios::in | std::ios::binary);
             if (!infile.is_open()) throw std::runtime_error("Can't find input file " + filename);
-            write_header(filename);
+            write_header(filename, file_type_flag::REGULAR_FILE);
             while (infile.good()) {
                 infile.read(block.data(), block.size());
                 const auto read = infile.gcount();
@@ -193,17 +209,15 @@ namespace tarxx {
 
         void add_file_streaming()
         {
-            if (!is_open()) throw std::logic_error("Cannot add file, tar archive is not open");
-            if (stream_file_header_pos_ >= 0) throw std::logic_error("Can't add new file while adding streaming data isn't completed");
+            check_state();
             if (mode_ != output_mode::file_output) throw std::logic_error(__func__ + " only supports output mode file"s);
 
-            // flush is necessary to get the correct position of the header
+                // flush is necessary to get the correct position of the header
 #ifdef WITH_LZ4
             if (compression_ == compression_mode::lz4) {
                 lz4_flush();
             }
 #endif
-
             // write empty header
             stream_file_header_pos_ = file_.tellg();
             block_t header {};
@@ -269,24 +283,60 @@ namespace tarxx {
             // seek to header
             const auto stream_pos = file_.tellp();
             file_.seekp(stream_file_header_pos_);
-            write_header(filename, mode, uid, gid, size, mod_time);
+            write_header(filename, mode, uid, gid, size, mod_time, file_type_flag::REGULAR_FILE);
             stream_file_header_pos_ = -1;
-
             file_.seekp(stream_pos);
         }
 #endif
 
     private:
-        static constexpr unsigned int HEADER_POS_MODE = 100U;
-        static constexpr unsigned int HEADER_POS_UID = 108U;
-        static constexpr unsigned int HEADER_POS_GID = 116U;
-        static constexpr unsigned int HEADER_POS_SIZE = 124U;
-        static constexpr unsigned int HEADER_POS_MTIM = 136U;
-        static constexpr unsigned int HEADER_LEN_MODE = 7U;
-        static constexpr unsigned int HEADER_LEN_UID = 7U;
-        static constexpr unsigned int HEADER_LEN_GID = 7U;
-        static constexpr unsigned int HEADER_LEN_SIZE = 11U;
-        static constexpr unsigned int HEADER_LEN_MTIM = 11U;
+        // Offsets
+        static constexpr unsigned int UNIX_V7_USTAR_HEADER_POS_NAME = 0U;
+        static constexpr unsigned int UNIX_V7_USTAR_HEADER_POS_MODE = 100U;
+        static constexpr unsigned int UNIX_V7_USTAR_HEADER_POS_UID = 108U;
+        static constexpr unsigned int UNIX_V7_USTAR_HEADER_POS_GID = 116U;
+        static constexpr unsigned int UNIX_V7_USTAR_HEADER_POS_SIZE = 124U;
+        static constexpr unsigned int UNIX_V7_USTAR_HEADER_POS_MTIM = 136U;
+        static constexpr unsigned int UNIX_V7_USTAR_HEADER_POS_CHECKSUM = 148U;
+        static constexpr unsigned int UNIX_V7_USTAR_HEADER_POS_TYPEFLAG = 156U;
+        static constexpr unsigned int UNIX_V7_USTAR_HEADER_POS_LINKNAME = 157U;
+
+        static constexpr unsigned int USTAR_HEADER_POS_MAGIC = 257U;
+        static constexpr unsigned int USTAR_HEADER_POS_UNAME = 265U;
+        static constexpr unsigned int USTAR_HEADER_POS_GNAME = 297U;
+        static constexpr unsigned int USTAR_HEADER_POS_DEVMAJOR = 329U;
+        static constexpr unsigned int USTAR_HEADER_POS_DEVMINOR = 337U;
+        static constexpr unsigned int USTAR_HEADER_POS_PREFIX = 345U;
+
+        // Lengths
+        static constexpr unsigned int UNIX_V7_USTAR_HEADER_LEN_NAME = 100U;
+        static constexpr unsigned int UNIX_V7_USTAR_HEADER_LEN_MODE = 8U;
+        static constexpr unsigned int UNIX_V7_USTAR_HEADER_LEN_UID = 8U;
+        static constexpr unsigned int UNIX_V7_USTAR_HEADER_LEN_GID = 8U;
+        static constexpr unsigned int UNIX_V7_USTAR_HEADER_LEN_SIZE = 12U;
+        static constexpr unsigned int UNIX_V7_USTAR_HEADER_LEN_MTIM = 12U;
+        static constexpr unsigned int UNIX_V7_USTAR_HEADER_LEN_CHKSUM = 8U;
+        static constexpr unsigned int UNIX_V7_USTAR_HEADER_LEN_TYPEFLAG = 1U;
+        static constexpr unsigned int UNIX_V7_USTAR_HEADER_LEN_LINKNAME = 100U;
+
+        static constexpr unsigned int USTAR_HEADER_LEN_MAGIC = 6U;
+        static constexpr unsigned int USTAR_HEADER_LEN_UNAME = 32U;
+        static constexpr unsigned int USTAR_HEADER_LEN_GNAME = 32U;
+        static constexpr unsigned int USTAR_HEADER_LEN_DEVMAJOR = 8U;
+        static constexpr unsigned int USTAR_HEADER_LEN_DEVMINOR = 8U;
+        static constexpr unsigned int USTAR_HEADER_LEN_PREFIX = 155U;
+
+        enum class file_type_flag : char {
+            REGULAR_FILE = '0',
+            HARD_LINK = '1',
+            SYMBOLIC_LINK = '2',
+            CHARACTER_SPECIAL_FILE = '3',
+            BLOCK_SPECIAL_FILE = '4',
+            DIRECTORY = '5',
+            FIFO = '6',
+            CONTIGUOUS_FILE = '7',
+        };
+
 
 #ifdef WITH_LZ4
         template<typename F, typename... Args>
@@ -358,36 +408,53 @@ namespace tarxx {
 #endif
         }
 
-        void write_header(const std::string& filename)
+        void write_header(const std::string& name, const file_type_flag& file_type)
         {
 #ifdef __linux
             struct ::stat buffer {};
-            const auto stat_result = ::stat(filename.c_str(), &buffer);
+            const auto stat_result = ::stat(name.c_str(), &buffer);
             if (stat_result != 0) {
                 throw errno_exception();
             }
 
-            write_header(filename, buffer.st_mode & ALLPERMS, buffer.st_uid, buffer.st_gid, buffer.st_size, buffer.st_mtim.tv_sec);
+            unsigned int dev_major = 0;
+            unsigned int dev_minor = 0;
+            // Store the device major number (for block or character devices).
+            // todo write a test for this
+            if (S_ISBLK(buffer.st_mode) || S_ISCHR(buffer.st_mode)) {
+                dev_major = major(buffer.st_rdev);
+                dev_minor = minor(buffer.st_rdev);
+            }
+
+            write_header(name, buffer.st_mode & ALLPERMS, buffer.st_uid, buffer.st_gid, buffer.st_size, buffer.st_mtim.tv_sec, file_type, dev_major, dev_minor);
 #endif
         }
 
-#ifdef __linux
-        void write_header(const std::string& filename, __mode_t mode, __uid_t uid, __gid_t gid, __off_t size, __time_t time)
+        void write_header(const std::string& name, __mode_t mode, __uid_t uid, __gid_t gid, __off_t size, __time_t time, const file_type_flag& file_type, unsigned int dev_major = 0, unsigned int dev_minor = 0)
         {
-            if (type_ != tar_type::unix_v7) throw std::logic_error("unsupported tar format");
+#ifdef __linux
+            if (type_ != tar_type::unix_v7 && type_ != tar_type::ustar) throw std::logic_error("unsupported tar format");
+            if (type_ == tar_type::unix_v7 && (static_cast<int>(file_type) > static_cast<int>(file_type_flag::SYMBOLIC_LINK))) throw std::logic_error("unsupported file type for tarv7 format");
 
             block_t header {};
-
-            write_into_block(header, filename, 0, 100);
-
-            write_into_block(header, mode, HEADER_POS_MODE, HEADER_LEN_MODE);
-            write_into_block(header, uid, HEADER_POS_UID, HEADER_LEN_UID);
-            write_into_block(header, gid, HEADER_POS_GID, HEADER_LEN_GID);
-            write_into_block(header, size, HEADER_POS_SIZE, HEADER_LEN_SIZE);
-            write_into_block(header, time, HEADER_POS_MTIM, HEADER_LEN_MTIM);
-
+            write_into_block(header, mode, UNIX_V7_USTAR_HEADER_POS_MODE, UNIX_V7_USTAR_HEADER_LEN_MODE);
+            write_into_block(header, uid, UNIX_V7_USTAR_HEADER_POS_UID, UNIX_V7_USTAR_HEADER_LEN_UID);
+            write_into_block(header, gid, UNIX_V7_USTAR_HEADER_POS_GID, UNIX_V7_USTAR_HEADER_LEN_GID);
+            write_into_block(header, size, UNIX_V7_USTAR_HEADER_POS_SIZE, UNIX_V7_USTAR_HEADER_LEN_SIZE);
+            write_into_block(header, time, UNIX_V7_USTAR_HEADER_POS_MTIM, UNIX_V7_USTAR_HEADER_LEN_MTIM);
+            write_into_block(header, static_cast<char>(file_type), UNIX_V7_USTAR_HEADER_POS_TYPEFLAG, UNIX_V7_USTAR_HEADER_LEN_TYPEFLAG);
+            write_name_and_prefix(header, name);
             //TODO link indicator (file type)
             //TODO name of linked file
+
+            if (type_ == tar_type::ustar) {
+                write_into_block(header, "ustar", USTAR_HEADER_POS_MAGIC, USTAR_HEADER_LEN_MAGIC);
+                write_user_name(header, uid);
+                write_group_name(header, gid);
+
+                write_into_block(header, to_octal_ascii(dev_major, USTAR_HEADER_LEN_DEVMAJOR), USTAR_HEADER_POS_DEVMAJOR, USTAR_HEADER_LEN_DEVMAJOR);
+                write_into_block(header, to_octal_ascii(dev_minor, USTAR_HEADER_LEN_DEVMAJOR), USTAR_HEADER_POS_DEVMINOR, USTAR_HEADER_LEN_DEVMINOR);
+            }
 #endif
 
             calc_and_write_checksum(header);
@@ -408,11 +475,11 @@ namespace tarxx {
 
         static void calc_and_write_checksum(block_t& block)
         {
-            std::fill_n(block.data() + 148, 8, ' ');
+            std::fill_n(block.data() + UNIX_V7_USTAR_HEADER_POS_CHECKSUM, UNIX_V7_USTAR_HEADER_LEN_CHKSUM, ' ');
             unsigned chksum = 0;
             for (unsigned char c : block) chksum += (c & 0xFF);
-            write_into_block(block, chksum, 148, 6);
-            block[154] = 0;
+            write_into_block(block, chksum, UNIX_V7_USTAR_HEADER_POS_CHECKSUM, UNIX_V7_USTAR_HEADER_LEN_CHKSUM - 2);
+            block[UNIX_V7_USTAR_HEADER_POS_CHECKSUM + UNIX_V7_USTAR_HEADER_LEN_CHKSUM - 1] = 0;
         }
 
         static std::string to_octal_ascii(unsigned long long value, unsigned width)
@@ -422,6 +489,54 @@ namespace tarxx {
             auto str = sstr.str();
             if (str.size() > width) str = str.substr(str.size() - width);
             return str;
+        }
+
+        void write_name_and_prefix(block_t& block, const std::string& name)
+        {
+            const auto write_name_unix_v7_format = [&]() {
+                write_into_block(block, name, UNIX_V7_USTAR_HEADER_POS_NAME, UNIX_V7_USTAR_HEADER_LEN_NAME);
+            };
+
+            if (name.size() <= UNIX_V7_USTAR_HEADER_LEN_NAME || type_ == tar_type::unix_v7) {
+                write_name_unix_v7_format();
+            } else {
+                const auto last_slash_index = name.rfind('/');
+                if (last_slash_index == std::string::npos) {
+                    write_name_unix_v7_format();
+                } else {
+                    const auto remaining_length = name.size() - last_slash_index;
+                    const auto length = remaining_length > UNIX_V7_USTAR_HEADER_LEN_NAME ? UNIX_V7_USTAR_HEADER_LEN_NAME : remaining_length;
+
+                    write_into_block(block, name.c_str() + last_slash_index + 1, UNIX_V7_USTAR_HEADER_POS_NAME, length);
+                    write_into_block(block, name, USTAR_HEADER_POS_PREFIX, last_slash_index);
+                }
+            }
+        }
+
+        static void write_user_name(block_t& block, __uid_t uid)
+        {
+#ifdef __linux
+            const auto* const pwd = getpwuid(uid);
+            // keep fields empty if we failed to get the name
+            if (pwd == nullptr) return;
+
+            write_into_block(block, pwd->pw_name, USTAR_HEADER_POS_UNAME, USTAR_HEADER_LEN_UNAME);
+#endif
+        }
+
+        static void write_group_name(block_t& block, __gid_t gid)
+        {
+#ifdef __linux
+            const auto* const group = getgrgid(gid);
+            if (group == nullptr) return;
+            write_into_block(block, group->gr_name, USTAR_HEADER_POS_GNAME, USTAR_HEADER_LEN_GNAME);
+#endif
+        }
+
+        void check_state()
+        {
+            if (!is_open()) throw std::logic_error("Cannot add file, tar archive is not open");
+            if (stream_file_header_pos_ >= 0) throw std::logic_error("Can't add new file while adding streaming data isn't completed");
         }
 
 #ifdef WITH_LZ4
@@ -439,6 +554,7 @@ namespace tarxx {
             lz4_out_buf_pos_ += headerSize;
             write_lz4_data();
         }
+
         void write_lz4_data()
         {
             unsigned long long offset = 0;

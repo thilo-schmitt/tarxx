@@ -29,41 +29,44 @@
 
 using std::string_literals::operator""s;
 
-TEST(lz4_tests, add_file_success)
+class lz4_tests : public ::testing::TestWithParam<tarxx::tarfile::tar_type> {};
+
+TEST_P(lz4_tests, add_file_success)
 {
+    const auto tar_type = GetParam();
     const auto tar_filename = std::filesystem::temp_directory_path() / "test.tar"s;
     const auto lz4_filename = tar_filename.string() + ".lz4";
-    const auto test_file = util::create_test_file();
+    const auto test_file = util::create_test_file(tar_type);
     util::remove_file_if_exists(tar_filename);
     util::remove_file_if_exists(lz4_filename);
 
-    tarxx::tarfile f(lz4_filename, tarxx::tarfile::compression_mode::lz4);
+    tarxx::tarfile f(lz4_filename, tarxx::tarfile::compression_mode::lz4, tar_type);
     f.add_file(test_file.path);
     f.close();
 
     util::decompress_lz4(lz4_filename, tar_filename);
-    util::tar_first_files_matches_original(tar_filename, test_file);
+    util::tar_first_files_matches_original(tar_filename, test_file, tar_type);
 }
 
-
-TEST(lz4_tests, add_multiple_files_recursive_success)
+TEST_P(lz4_tests, add_multiple_files_recursive_success)
 {
+    const auto tar_type = GetParam();
     const auto tar_filename = std::filesystem::temp_directory_path() / "test.tar"s;
     const auto lz4_filename = tar_filename.string() + ".lz4";
-    const auto [dir, test_files] = util::create_multiple_test_files_with_sub_folders();
+    const auto [dir, test_files] = util::create_multiple_test_files_with_sub_folders(tar_type);
     util::remove_file_if_exists(tar_filename);
     util::remove_file_if_exists(lz4_filename);
 
-    tarxx::tarfile tar_file(lz4_filename, tarxx::tarfile::compression_mode::lz4);
+    tarxx::tarfile tar_file(lz4_filename, tarxx::tarfile::compression_mode::lz4, tar_type);
     tar_file.add_files_recursive(dir);
     tar_file.close();
 
     util::decompress_lz4(lz4_filename, tar_filename);
-    util::expect_files_in_tar(tar_filename, test_files);
+    util::expect_files_in_tar(tar_filename, test_files, tar_type);
     std::filesystem::remove_all(dir);
 }
 
-void lz4_validate_streaming_data(const unsigned int size)
+void lz4_validate_streaming_data(const unsigned int size, const tarxx::tarfile::tar_type& tar_type)
 {
     const auto tar_filename = std::filesystem::temp_directory_path() / "test.tar"s;
     const auto lz4_filename = tar_filename.string() + ".lz4";
@@ -71,28 +74,32 @@ void lz4_validate_streaming_data(const unsigned int size)
     util::remove_file_if_exists(lz4_filename);
 
     const auto input_data = util::create_input_data(size);
-    const auto reference_file = util::create_test_file(std::filesystem::temp_directory_path() / "test_file", input_data);
+    const auto reference_file = util::create_test_file(tar_type, std::filesystem::temp_directory_path() / "test_file", input_data);
 
-
-    tarxx::tarfile tar_file(lz4_filename, tarxx::tarfile::compression_mode::lz4);
+    tarxx::tarfile tar_file(lz4_filename, tarxx::tarfile::compression_mode::lz4, tar_type);
     util::add_streaming_data(input_data, reference_file, tar_file);
     tar_file.close();
 
     util::decompress_lz4(lz4_filename, tar_filename);
-    util::tar_has_one_file_and_matches(tar_filename, reference_file);
+    util::tar_has_one_file_and_matches(tar_filename, reference_file, tar_type);
 }
 
-TEST(lz4_tests, add_file_stream_data_smaller_than_block_size)
+TEST_P(lz4_tests, add_file_stream_data_smaller_than_block_size)
 {
-    lz4_validate_streaming_data(tarxx::BLOCK_SIZE / 2);
+    const auto tar_type = GetParam();
+    lz4_validate_streaming_data(tarxx::BLOCK_SIZE / 2, tar_type);
 }
 
-TEST(lz4_tests, add_file_stream_data_two_block_sizes)
+TEST_P(lz4_tests, add_file_stream_data_two_block_sizes)
 {
-    lz4_validate_streaming_data(tarxx::BLOCK_SIZE * 2);
+    const auto tar_type = GetParam();
+    lz4_validate_streaming_data(tarxx::BLOCK_SIZE * 2, tar_type);
 }
 
-TEST(lz4_tests, add_file_stream_data_multi_block)
+TEST_P(lz4_tests, add_file_stream_data_multi_block)
 {
-    lz4_validate_streaming_data(tarxx::BLOCK_SIZE * 1.52);
+    const auto tar_type = GetParam();
+    lz4_validate_streaming_data(tarxx::BLOCK_SIZE * 1.52, tar_type);
 }
+
+INSTANTIATE_TEST_SUITE_P(tar_type_dependent, lz4_tests, ::testing::Values(tarxx::tarfile::tar_type::unix_v7, tarxx::tarfile::tar_type::ustar));
