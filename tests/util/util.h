@@ -35,10 +35,13 @@
 #include <sstream>
 #include <string>
 #include <vector>
+#include <chrono>
+#include <ctime>
 
 #ifdef __linux
 #    include "tarxx.h"
 #    include <fstream>
+#    include <grp.h>
 #    include <gtest/gtest.h>
 #    include <pwd.h>
 #    include <unistd.h>
@@ -54,6 +57,7 @@ namespace util {
         std::string date;
         std::string time;
         std::string path;
+        struct timespec mtime;
     };
 
 #ifdef __linux
@@ -73,6 +77,20 @@ namespace util {
     {
         const auto pw = passwd();
         return pw == nullptr ? std::numeric_limits<decltype(pw->pw_uid)>::max() : pw->pw_gid;
+    }
+
+    inline std::string user_name()
+    {
+        const auto pw = passwd();
+        return pw == nullptr ? "" : pw->pw_name;
+    }
+
+    inline std::string group_name()
+    {
+        const auto pw = passwd();
+        if (pw == nullptr) return "";
+        const struct group* group = getgrgid(pw->pw_gid);
+        return group == nullptr ? "" : group->gr_name;
     }
 #endif
 
@@ -102,7 +120,7 @@ namespace util {
 
         auto status = -1;
         if (pid <= 0) throw std::runtime_error(std::string("can't wait for process to finish, what=") + std::strerror(errno));
-        if (waitpid(pid, &status, 0) == -1)  throw std::runtime_error(std::string("waitpid failed, what=") + std::strerror(errno));
+        if (waitpid(pid, &status, 0) == -1) throw std::runtime_error(std::string("waitpid failed, what=") + std::strerror(errno));
         return WIFEXITED(status);
     }
 
@@ -170,13 +188,23 @@ namespace util {
     }
 
     inline file_info create_test_file(
+            const tarxx::tarfile::tar_type& tar_type,
             const std::filesystem::path& test_file_path = std::filesystem::temp_directory_path() / "test_file",
             const std::string& file_content = "test content")
     {
         file_info file;
         file.path = test_file_path;
-        file.owner = std::to_string(util::uid());
-        file.group = std::to_string(util::gid());
+        switch (tar_type) {
+            case tarxx::tarfile::tar_type::unix_v7:
+                file.owner = std::to_string(util::uid());
+                file.group = std::to_string(util::gid());
+                break;
+            case tarxx::tarfile::tar_type::ustar:
+                file.owner = util::user_name();
+                file.group = util::group_name();
+                break;
+        }
+
         util::remove_file_if_exists(file.path);
         std::filesystem::create_directories(test_file_path.parent_path());
 
@@ -184,10 +212,22 @@ namespace util {
         os << file_content << std::endl;
         os.close();
         file.size = std::filesystem::file_size(file.path);
+
+        struct stat stat_res{};
+        assert(stat(file.path.c_str(), &stat_res) == 0);
+        file.mtime = stat_res.st_mtim;
+
+        std::array<char, 20> buf{};
+        std::strftime(buf.data(), buf.size(), "%Y-%m-%d", localtime( &stat_res.st_mtime));
+        file.date = std::string(buf.data());
+        std::memset(buf.data(), 0, buf.size());
+
+        std::strftime(buf.data(), buf.size(), "%H:%M", localtime( &stat_res.st_mtime));
+        file.time = std::string(buf.data());
         return file;
     }
 
-    inline std::tuple<std::filesystem::path, std::vector<util::file_info>> create_multiple_test_files_with_sub_folders()
+    inline std::tuple<std::filesystem::path, std::vector<util::file_info>> create_multiple_test_files_with_sub_folders(const tarxx::tarfile::tar_type& tar_type)
     {
         std::filesystem::path dir(std::filesystem::temp_directory_path() / "add_multiple_files_recursive_success");
         if (!std::filesystem::exists(dir)) {
@@ -201,7 +241,7 @@ namespace util {
 
         std::vector<util::file_info> expected_files;
         for (const auto& file : test_files) {
-            expected_files.emplace_back(util::create_test_file(file));
+            expected_files.emplace_back(util::create_test_file(tar_type, file));
         }
 
         return {dir, expected_files};
@@ -215,31 +255,33 @@ namespace util {
         return test_files_str.str();
     }
 
-    inline void file_from_tar_matches_original_file(const util::file_info& test_file, const util::file_info& file_in_tar)
+    inline void file_from_tar_matches_original_file(const util::file_info& test_file, const util::file_info& file_in_tar, const tarxx::tarfile::tar_type& tar_type)
     {
         EXPECT_EQ(test_file.path, file_in_tar.path);
         EXPECT_EQ(test_file.size, file_in_tar.size);
+        EXPECT_EQ(test_file.date, file_in_tar.date);
+
 #ifdef __linux
-        EXPECT_EQ(file_in_tar.owner, std::to_string(util::uid()));
-        EXPECT_EQ(file_in_tar.group, std::to_string(util::gid()));
+        EXPECT_EQ(file_in_tar.owner, test_file.owner);
+        EXPECT_EQ(file_in_tar.group, test_file.group);
 #endif
     }
 
-    inline void tar_has_one_file_and_matches(const std::string& tar_filename, const file_info& reference_file)
+    inline void tar_has_one_file_and_matches(const std::string& tar_filename, const file_info& reference_file, const tarxx::tarfile::tar_type& tar_type)
     {
         const auto files = util::files_in_tar_archive(tar_filename);
         EXPECT_EQ(files.size(), 1);
-        util::file_from_tar_matches_original_file(files.at(0), reference_file);
+        util::file_from_tar_matches_original_file(reference_file, files.at(0), tar_type);
     }
 
-    inline void tar_first_files_matches_original(const std::string& tar_filename, const file_info& original)
+    inline void tar_first_files_matches_original(const std::string& tar_filename, const file_info& original, const tarxx::tarfile::tar_type& tar_type)
     {
         const auto files = util::files_in_tar_archive(tar_filename);
         EXPECT_EQ(files.size(), 1);
-        util::file_from_tar_matches_original_file(original, files.at(0));
+        util::file_from_tar_matches_original_file(original, files.at(0), tar_type);
     }
 
-    inline void expect_files_in_tar(const std::string& tar_filename, const std::vector<util::file_info>& expected_files)
+    inline void expect_files_in_tar(const std::string& tar_filename, const std::vector<util::file_info>& expected_files, const tarxx::tarfile::tar_type& tar_type)
     {
         const auto files_in_tar = util::files_in_tar_archive(tar_filename);
         EXPECT_EQ(files_in_tar.size(), expected_files.size());
@@ -250,7 +292,7 @@ namespace util {
                 if (found_file.path != expected_file.path) continue;
 
                 expected_file_found = true;
-                util::file_from_tar_matches_original_file(expected_file, found_file);
+                util::file_from_tar_matches_original_file(expected_file, found_file, tar_type);
             }
 
             EXPECT_TRUE(expected_file_found);
@@ -261,7 +303,7 @@ namespace util {
     {
         tar_file.add_file_streaming();
         tar_file.add_file_streaming_data(reference_data.data(), reference_data.size());
-        tar_file.stream_file_complete(reference_file.path, 655, util::uid(), util::gid(), reference_file.size, 0);
+        tar_file.stream_file_complete(reference_file.path, 655, util::uid(), util::gid(), reference_file.size, reference_file.mtime.tv_sec);
     }
 
     inline std::string create_input_data(unsigned long size)
