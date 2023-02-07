@@ -53,13 +53,17 @@ TEST_P(lz4_tests, add_multiple_files_recursive_success)
     const auto tar_type = GetParam();
     const auto tar_filename = std::filesystem::temp_directory_path() / "test.tar"s;
     const auto lz4_filename = tar_filename.string() + ".lz4";
-    const auto [dir, test_files] = util::create_multiple_test_files_with_sub_folders(tar_type);
+    auto [dir, test_files] = util::create_multiple_test_files_with_sub_folders(tar_type);
     util::remove_file_if_exists(tar_filename);
     util::remove_file_if_exists(lz4_filename);
 
     tarxx::tarfile tar_file(lz4_filename, tarxx::tarfile::compression_mode::lz4, tar_type);
     tar_file.add_files_recursive(dir);
     tar_file.close();
+
+    if (tar_type == tarxx::tarfile::tar_type::ustar) {
+        util::append_folders_from_test_files(test_files, tar_type);
+    }
 
     util::decompress_lz4(lz4_filename, tar_filename);
     util::expect_files_in_tar(tar_filename, test_files, tar_type);
