@@ -28,15 +28,15 @@
 #define TARXX_SYSTEM_TAR_H
 
 #include <array>
+#include <chrono>
 #include <cstdlib>
 #include <cstring>
+#include <ctime>
 #include <filesystem>
 #include <regex>
 #include <sstream>
 #include <string>
 #include <vector>
-#include <chrono>
-#include <ctime>
 
 #ifdef __linux
 #    include "tarxx.h"
@@ -187,13 +187,8 @@ namespace util {
         }
     }
 
-    inline file_info create_test_file(
-            const tarxx::tarfile::tar_type& tar_type,
-            const std::filesystem::path& test_file_path = std::filesystem::temp_directory_path() / "test_file",
-            const std::string& file_content = "test content")
+    inline void file_info_set_stat(file_info& file, const tarxx::tarfile::tar_type& tar_type)
     {
-        file_info file;
-        file.path = test_file_path;
         switch (tar_type) {
             case tarxx::tarfile::tar_type::unix_v7:
                 file.owner = std::to_string(util::uid());
@@ -205,6 +200,27 @@ namespace util {
                 break;
         }
 
+        struct stat stat_res {};
+        assert(stat(file.path.c_str(), &stat_res) == 0);
+        file.mtime = stat_res.st_mtim;
+
+        std::array<char, 20> buf {};
+        strftime(buf.data(), buf.size(), "%Y-%m-%d", localtime(&stat_res.st_mtime));
+        file.date = std::string(buf.data());
+        memset(buf.data(), 0, buf.size());
+
+        strftime(buf.data(), buf.size(), "%H:%M", localtime(&stat_res.st_mtime));
+        file.time = std::string(buf.data());
+    }
+
+    inline file_info create_test_file(
+            const tarxx::tarfile::tar_type& tar_type,
+            const std::filesystem::path& test_file_path = std::filesystem::temp_directory_path() / "test_file",
+            const std::string& file_content = "test content")
+    {
+        file_info file;
+        file.path = test_file_path;
+
         util::remove_file_if_exists(file.path);
         std::filesystem::create_directories(test_file_path.parent_path());
 
@@ -213,23 +229,27 @@ namespace util {
         os.close();
         file.size = std::filesystem::file_size(file.path);
 
-        struct stat stat_res{};
-        assert(stat(file.path.c_str(), &stat_res) == 0);
-        file.mtime = stat_res.st_mtim;
+        file_info_set_stat(file, tar_type);
+        return file;
+    }
 
-        std::array<char, 20> buf{};
-        std::strftime(buf.data(), buf.size(), "%Y-%m-%d", localtime( &stat_res.st_mtime));
-        file.date = std::string(buf.data());
-        std::memset(buf.data(), 0, buf.size());
+    inline file_info create_test_directory(
+            const tarxx::tarfile::tar_type& tar_type,
+            const std::filesystem::path& test_file_path = std::filesystem::temp_directory_path() / "test_dir")
+    {
+        file_info file;
+        file.path = test_file_path;
 
-        std::strftime(buf.data(), buf.size(), "%H:%M", localtime( &stat_res.st_mtime));
-        file.time = std::string(buf.data());
+        util::remove_file_if_exists(file.path);
+        std::filesystem::create_directories(test_file_path);
+        file_info_set_stat(file, tar_type);
+
         return file;
     }
 
     inline std::tuple<std::filesystem::path, std::vector<util::file_info>> create_multiple_test_files_with_sub_folders(const tarxx::tarfile::tar_type& tar_type)
     {
-        std::filesystem::path dir(std::filesystem::temp_directory_path() / "add_multiple_files_recursive_success");
+        std::filesystem::path dir(std::filesystem::temp_directory_path() / "test");
         if (!std::filesystem::exists(dir)) {
             std::filesystem::create_directories(dir);
         }
@@ -245,6 +265,21 @@ namespace util {
         }
 
         return {dir, expected_files};
+    }
+
+    inline void append_folders_from_test_files(std::vector<file_info>& files, const tarxx::tarfile::tar_type& tar_type)
+    {
+        std::set<std::string> folders;
+        for (const auto& f : files) {
+            std::filesystem::path p(f.path);
+            folders.emplace(p.parent_path().string());
+        }
+        for (const auto& folder : folders) {
+            util::file_info fi;
+            fi.path = folder;
+            file_info_set_stat(fi, tar_type);
+            files.push_back(fi);
+        }
     }
 
     inline std::string test_files_as_str(const std::vector<file_info>& test_files)

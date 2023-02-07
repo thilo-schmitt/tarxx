@@ -172,17 +172,50 @@ namespace tarxx {
 #ifdef __cpp_lib_filesystem
         void add_files_recursive(const std::filesystem::path& path)
         {
-            if (is_directory(path)) {
-                //TODO https://github.com/thilo-schmitt/tarxx/issues/10 support for directories is missing
-                for (const auto& f : std::filesystem::recursive_directory_iterator(path)) {
-                    if (f.is_regular_file())
-                        add_file(f.path());
+            const auto add = [&](const std::filesystem::path& p) {
+                if (std::filesystem::is_regular_file(p)) {
+                    add_file(p.string());
+                } else if (std::filesystem::is_directory(path)) {
+                    if (type_ == tar_type::ustar)
+                        add_directory(path);
+                } else {
+                    throw std::invalid_argument(path.string() + " is neither a regular file, nor a directory");
                 }
-            } else if (is_regular_file(path)) {
-                add_file(path);
+            };
+
+            if (is_directory(path)) {
+                add(path);
+                for (const auto& f : std::filesystem::recursive_directory_iterator(path)) {
+                    add(f);
+                }
             } else {
-                throw std::invalid_argument(path.string() + " is neither a regular file, nor a directory");
+                add(path);
             }
+        }
+#endif
+        void add_directory(const std::string& dirname)
+        {
+            check_state();
+
+#ifdef WITH_LZ4
+            if (compression_ == compression_mode::lz4) {
+                lz4_flush();
+            }
+#endif
+            write_header(dirname, file_type_flag::DIRECTORY);
+        }
+
+#ifdef __linux
+        void add_directory(const std::string& dirname, __mode_t mode, __uid_t uid, __gid_t gid, __time_t mod_time)
+        {
+            check_state();
+
+#    ifdef WITH_LZ4
+            if (compression_ == compression_mode::lz4) {
+                lz4_flush();
+            }
+#    endif
+            write_header(dirname, mode, uid, gid, 0, mod_time, file_type_flag::DIRECTORY);
         }
 #endif
         // TODO add support for adding directories
@@ -424,6 +457,26 @@ namespace tarxx {
             if (S_ISBLK(buffer.st_mode) || S_ISCHR(buffer.st_mode)) {
                 dev_major = major(buffer.st_rdev);
                 dev_minor = minor(buffer.st_rdev);
+            }
+
+            switch (file_type) {
+                case file_type_flag::REGULAR_FILE:
+                    if (!S_ISREG(buffer.st_mode)) throw std::invalid_argument("path is not a file");
+                    break;
+                case file_type_flag::DIRECTORY:
+                    if (!S_ISDIR(buffer.st_mode)) throw std::invalid_argument("path is not a directory");
+                    break;
+                case file_type_flag::HARD_LINK:
+                case file_type_flag::SYMBOLIC_LINK:
+                case file_type_flag::CHARACTER_SPECIAL_FILE:
+                case file_type_flag::BLOCK_SPECIAL_FILE:
+                case file_type_flag::FIFO:
+                case file_type_flag::CONTIGUOUS_FILE:
+                    throw std::invalid_argument("Not supported yet");
+            }
+
+            if (S_ISDIR(buffer.st_mode)) {
+                buffer.st_size = 0;
             }
 
             write_header(name, buffer.st_mode & ALLPERMS, buffer.st_uid, buffer.st_gid, buffer.st_size, buffer.st_mtim.tv_sec, file_type, dev_major, dev_minor);
