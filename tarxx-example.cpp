@@ -24,12 +24,10 @@
 // OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 #include "tarxx.h"
-#include <filesystem>
 #include <iostream>
 #include <string>
 #include <vector>
-
-#if __linux
+#if defined(__linux)
 #    include <getopt.h>
 #    include <unistd.h>
 #else
@@ -42,17 +40,7 @@ static int tar_files_in(
 {
     if (!tar.is_open()) return 2;
     for (const auto& file : input_files) {
-        std::filesystem::path path(file);
-        if (is_directory(path)) {
-            for (const auto& dir_entry :
-                 std::filesystem::recursive_directory_iterator(path)) {
-                if (!is_directory(dir_entry)) {
-                    tar.add_file(dir_entry.path());
-                }
-            }
-        } else {
-            tar.add_file(path);
-        }
+        tar.add_from_filesystem_recursive(file);
     }
 
     return 0;
@@ -65,7 +53,6 @@ static int tar_files_in_stream_out(std::ostream& os, const std::vector<std::stri
 #endif
 
 {
-
     tarxx::tarfile::callback_t cb = [&](const tarxx::block_t& block, const size_t size) {
         os.write(block.data(), size);
     };
@@ -153,14 +140,14 @@ static int tar_stream_in_stream_out(std::ostream& os, const tarxx::tarfile::tar_
 
 static bool std_out_redirected()
 {
-#ifdef __linux
+#if defined(__linux)
     return isatty(fileno(stdout)) == 0;
 #endif
 }
 
 static bool std_in_redirected()
 {
-#ifdef __linux
+#if defined(__linux)
     return isatty(fileno(stdin)) == 0;
 #endif
 }
@@ -180,7 +167,7 @@ int main(const int argc, char* const* const argv)
 #ifdef WITH_LZ4
     shortOpts += 'k';
 #endif
-#ifdef __linux
+#if defined(__linux)
     while ((opt = getopt(argc, argv, shortOpts.c_str())) != -1) {
         switch (opt) {
             case 'c':

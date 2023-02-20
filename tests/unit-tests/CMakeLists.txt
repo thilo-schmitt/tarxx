@@ -10,6 +10,8 @@ list(APPEND SOURCES tar.cpp)
 set(TARGET unit-tests)
 find_package(GTest REQUIRED)
 pkg_check_modules(GMock REQUIRED "gmock")
+list(APPEND LIBRARIES GTest::GTest GTest::Main)
+
 enable_testing()
 
 add_executable(
@@ -19,9 +21,6 @@ add_executable(
 
 target_link_libraries(
         ${TARGET}
-        GTest::GTest
-        GTest::Main
-        ${GMock_LIBRARIES}
         ${LIBRARIES}
 )
 
@@ -36,6 +35,3 @@ set_target_properties(${TARGET} PROPERTIES
         CXX_STANDARD 17
         CXX_STANDARD_REQUIRED ON
         CXX_EXTENSIONS OFF)
-
-include(GoogleTest)
-gtest_discover_tests(${TARGET})

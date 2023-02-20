@@ -52,22 +52,22 @@ TEST_P(tar_tests, is_open_returns_fall_stream_mode_callback_nullptr)
 TEST_P(tar_tests, add_non_existing_file)
 {
     const auto tar_type = GetParam();
-    tarxx::tarfile f(std::filesystem::temp_directory_path() / "test.tar", tar_type);
-    EXPECT_THROW(f.add_file("this-file-does-not-exist"), std::runtime_error);
+    tarxx::tarfile f(util::tar_file_name(), tar_type);
+    EXPECT_THROW(f.add_from_filesystem("this-file-does-not-exist"), std::invalid_argument);
 }
 
-TEST_P(tar_tests, add_file_when_file_is_not_open_throws)
+TEST_P(tar_tests, add_from_filesystem_when_file_is_not_open_throws)
 {
     const auto tar_type = GetParam();
     tarxx::tarfile f("", tar_type);
-    EXPECT_THROW(f.add_file("bar"), std::logic_error);
+    EXPECT_THROW(f.add_from_filesystem("bar"), std::logic_error);
 }
 
 TEST_P(tar_tests, add_file_streaming_when_file_is_not_open_throws)
 {
     const auto tar_type = GetParam();
     tarxx::tarfile f("", tar_type);
-    EXPECT_THROW(f.add_file("bar"), std::logic_error);
+    EXPECT_THROW(f.add_from_filesystem("bar"), std::logic_error);
 }
 
 TEST_P(tar_tests, stream_file_finish_when_file_is_not_open_throws)
@@ -95,7 +95,7 @@ TEST_P(tar_tests, double_close)
 TEST_P(tar_tests, close_file)
 {
     const auto tar_type = GetParam();
-    tarxx::tarfile f(std::filesystem::temp_directory_path() / "test.tar", tar_type);
+    tarxx::tarfile f(util::tar_file_name(), tar_type);
     EXPECT_TRUE(f.is_open());
     f.close();
     EXPECT_FALSE(f.is_open());
@@ -143,18 +143,18 @@ TEST_P(tar_tests, finish_on_close)
     EXPECT_EQ(expected_writes, writes);
 }
 
-TEST_P(tar_tests, add_file_with_stream_file_throws)
+TEST_P(tar_tests, add_from_filesystem_with_stream_file_throws)
 {
     const auto tar_type = GetParam();
-    tarxx::tarfile f(std::filesystem::temp_directory_path() / "test.tar", tar_type);
+    tarxx::tarfile f(util::tar_file_name(), tar_type);
     f.add_file_streaming();
-    EXPECT_THROW(f.add_file("foobar");, std::logic_error);
+    EXPECT_THROW(f.add_from_filesystem("foobar");, std::logic_error);
 }
 
 TEST_P(tar_tests, add_file_streaming_twice_throws)
 {
     const auto tar_type = GetParam();
-    tarxx::tarfile f(std::filesystem::temp_directory_path() / "test.tar", tar_type);
+    tarxx::tarfile f(util::tar_file_name(), tar_type);
     f.add_file_streaming();
     EXPECT_THROW(f.add_file_streaming();, std::logic_error);
 }
@@ -168,15 +168,15 @@ TEST_P(tar_tests, add_file_streaming_with_stream_output_throws)
     EXPECT_THROW(f.add_file_streaming();, std::logic_error);
 }
 
-TEST_P(tar_tests, add_file_success)
+TEST_P(tar_tests, add_from_filesystem_success)
 {
     const auto tar_type = GetParam();
-    const auto tar_filename = std::filesystem::temp_directory_path() / "test.tar";
+    const auto tar_filename = util::tar_file_name();
     const auto test_file = util::create_test_file(tar_type);
-    util::remove_file_if_exists(tar_filename);
+    util::remove_if_exists(tar_filename);
 
     tarxx::tarfile f(tar_filename, tar_type);
-    f.add_file(test_file.path);
+    f.add_from_filesystem(test_file.path);
     f.close();
 
     const auto files = util::files_in_tar_archive(tar_filename);
@@ -187,12 +187,12 @@ TEST_P(tar_tests, add_file_success)
 TEST_P(tar_tests, add_multiple_files_recursive_success)
 {
     const auto tar_type = GetParam();
-    const auto tar_filename = std::filesystem::temp_directory_path() / "test.tar";
+    const auto tar_filename = util::tar_file_name();
     auto [dir, test_files] = util::create_multiple_test_files_with_sub_folders(tar_type);
-    util::remove_file_if_exists(tar_filename);
+    util::remove_if_exists(tar_filename);
 
     tarxx::tarfile tar_file(tar_filename, tar_type);
-    tar_file.add_files_recursive(dir);
+    tar_file.add_from_filesystem_recursive(dir);
     tar_file.close();
 
     if (tar_type == tarxx::tarfile::tar_type::ustar) {
@@ -205,10 +205,10 @@ TEST_P(tar_tests, add_multiple_files_recursive_success)
 
 void tar_validate_streaming_data(const unsigned int size, const tarxx::tarfile::tar_type& tar_type)
 {
-    const auto tar_filename = std::filesystem::temp_directory_path() / "test.tar"s;
+    const auto tar_filename = util::tar_file_name();
     const auto input_data = util::create_input_data(size);
     const auto test_file = util::create_test_file(tar_type, std::filesystem::temp_directory_path() / "test_file", input_data);
-    util::remove_file_if_exists(tar_filename);
+    util::remove_if_exists(tar_filename);
 
     tarxx::tarfile tar_file(tar_filename, tar_type);
     util::add_streaming_data(input_data, test_file, tar_file);
@@ -217,28 +217,28 @@ void tar_validate_streaming_data(const unsigned int size, const tarxx::tarfile::
     util::tar_has_one_file_and_matches(tar_filename, test_file, tar_type);
 }
 
-TEST_P(tar_tests, add_file_stream_data_smaller_than_block_size)
+TEST_P(tar_tests, add_from_filesystem_stream_data_smaller_than_block_size)
 {
     const auto tar_type = GetParam();
     tar_validate_streaming_data(tarxx::BLOCK_SIZE / 2, tar_type);
 }
 
-TEST_P(tar_tests, add_file_stream_data_two_block_sizes)
+TEST_P(tar_tests, add_from_filesystem_stream_data_two_block_sizes)
 {
     const auto tar_type = GetParam();
     tar_validate_streaming_data(tarxx::BLOCK_SIZE * 2, tar_type);
 }
 
-TEST_P(tar_tests, add_file_stream_data_multi_block)
+TEST_P(tar_tests, add_from_filesystem_stream_data_multi_block)
 {
     const auto tar_type = GetParam();
     tar_validate_streaming_data(tarxx::BLOCK_SIZE * 1.42, tar_type);
 }
 
-TEST_P(tar_tests, add_file_success_long_name)
+TEST_P(tar_tests, add_from_filesystem_success_long_name)
 {
     const auto tar_type = GetParam();
-    const auto tar_filename = std::filesystem::temp_directory_path() / "test.tar";
+    const auto tar_filename = util::tar_file_name();
     auto file_name = "this_file_name_has_100_chars_which_is_the_limit_of_tar_v7"s;
     while ((std::filesystem::temp_directory_path() / file_name).string().length() < 99) {
         file_name += "x";
@@ -247,10 +247,10 @@ TEST_P(tar_tests, add_file_success_long_name)
     ASSERT_EQ((std::filesystem::temp_directory_path() / file_name).string().length(), 100);
 
     const auto test_file = util::create_test_file(tar_type, std::filesystem::temp_directory_path() / file_name);
-    util::remove_file_if_exists(tar_filename);
+    util::remove_if_exists(tar_filename);
 
     tarxx::tarfile f(tar_filename, tar_type);
-    f.add_file(test_file.path);
+    f.add_from_filesystem(test_file.path);
     f.close();
 
     const auto files = util::files_in_tar_archive(tar_filename);
@@ -258,14 +258,14 @@ TEST_P(tar_tests, add_file_success_long_name)
     util::file_from_tar_matches_original_file(test_file, files.at(0), tar_type);
 }
 
-TEST_P(tar_tests, add_files_relative_path)
+TEST_P(tar_tests, add_from_filesystems_relative_path)
 {
     const auto tar_type = GetParam();
-    const auto tar_filename = std::filesystem::temp_directory_path() / "test.tar";
+    const auto tar_filename = util::tar_file_name();
 
     auto [dir, test_files] = util::create_multiple_test_files_with_sub_folders(tar_type);
     std::filesystem::current_path(dir);
-    util::remove_file_if_exists(tar_filename);
+    util::remove_if_exists(tar_filename);
 
     tarxx::tarfile tar_file(tar_filename, tar_type);
 
@@ -275,7 +275,7 @@ TEST_P(tar_tests, add_files_relative_path)
         name_without_root_path.replace(name_without_root_path.find(path), path.size(), "");
 
         const auto name = name_without_root_path;
-        tar_file.add_file(name);
+        tar_file.add_from_filesystem(name);
         f.path = name_without_root_path;
     }
 
@@ -286,10 +286,78 @@ TEST_P(tar_tests, add_files_relative_path)
     std::filesystem::remove_all(dir);
 }
 
-// this test is only for ustar
-TEST(tar_tests, add_file_ustar_prefix_used)
+TEST_P(tar_tests, add_link)
 {
-    const auto tar_filename = std::filesystem::temp_directory_path() / "test.tar";
+    if (util::tar_version() != util::tar_version::gnu) {
+        // Only GNU tar shows links in tar -tvf
+        return;
+    }
+
+    const auto tar_type = GetParam();
+    const auto tar_filename = util::tar_file_name();
+
+    const auto file_name = "test_file";
+    const auto test_file = util::create_test_file(tar_type, std::filesystem::temp_directory_path() / file_name);
+    const auto link_location = std::filesystem::temp_directory_path() / "symlink_to_file";
+
+    util::remove_if_exists(tar_filename);
+    util::remove_if_exists(link_location);
+
+    std::filesystem::create_symlink(test_file.path, link_location);
+    util::file_info link_test_file {
+            .path = link_location};
+    util::file_info_set_stat(link_test_file, tar_type);
+
+    tarxx::tarfile tar_file(tar_filename, tar_type);
+    tar_file.add_from_filesystem(test_file.path);
+    tar_file.add_from_filesystem(link_location);
+
+    tar_file.close();
+
+    const auto files_in_tar = util::files_in_tar_archive(tar_filename);
+    const std::vector<util::file_info> expected_files = {
+            link_test_file,
+            test_file,
+    };
+
+    util::expect_files_in_tar(tar_filename, expected_files, tar_type);
+}
+
+TEST_P(tar_tests, add_link_on_the_fly)
+{
+    if (util::tar_version() != util::tar_version::gnu) {
+        // Only GNU tar shows links in tar -tvf
+        return;
+    }
+
+    const auto tar_type = GetParam();
+    const auto tar_filename = util::tar_file_name();
+
+    const tarxx::Platform platform;
+    tarxx::tarfile tar_file(tar_filename, tar_type);
+    const auto file_name = "file";
+    const auto link_name = "link";
+    tar_file.add_link(file_name, link_name, platform.user_id(), platform.group_id(), 0);
+    util::file_info fake_link {
+            .permissions = "lrwxrwxrwx",
+            .owner = tar_type == tarxx::tarfile::tar_type::ustar ? platform.user_name() : std::to_string(platform.user_id()),
+            .group = tar_type == tarxx::tarfile::tar_type::ustar ? platform.group_name() : std::to_string(platform.group_id()),
+            .size = 0U,
+            .date = "1970-01-01",
+            .time = "00:00",
+            .path = file_name,
+            .link_name = link_name,
+            .mtime = {},
+            .mode = static_cast<tarxx::mode_t>(tarxx::permission_t::all_all)};
+
+    tar_file.close();
+    util::expect_files_in_tar(tar_filename, {fake_link}, tar_type);
+}
+
+// this test is only for ustar
+TEST(tar_tests, add_from_filesystem_ustar_prefix_used)
+{
+    const auto tar_filename = util::tar_file_name();
     const auto tar_type = tarxx::tarfile::tar_type::ustar;
     const auto create_file_name = [&](int len) {
         auto name = "test"s;
@@ -329,10 +397,10 @@ TEST(tar_tests, add_file_ustar_prefix_used)
             &file_with_slash_at_index_100,
             &file_with_short_name};
 
-    util::remove_file_if_exists(tar_filename);
+    util::remove_if_exists(tar_filename);
     tarxx::tarfile f(tar_filename, tar_type);
     for (const auto* const fi : test_files) {
-        f.add_file(fi->path);
+        f.add_from_filesystem(fi->path);
     }
     f.close();
 
@@ -350,12 +418,12 @@ TEST(tar_tests, add_file_ustar_prefix_used)
 TEST(tar_tests, add_directory_from_filesystem)
 {
     const auto tar_type = tarxx::tarfile::tar_type::ustar;
-    const auto tar_filename = std::filesystem::temp_directory_path() / "test.tar";
+    const auto tar_filename = util::tar_file_name();
     const auto test_dir = util::create_test_directory(tar_type);
 
     tarxx::tarfile f(tar_filename, tar_type);
 
-    f.add_directory(test_dir.path);
+    f.add_from_filesystem(test_dir.path);
     f.close();
 
     const auto files = util::files_in_tar_archive(tar_filename);
@@ -366,22 +434,43 @@ TEST(tar_tests, add_directory_from_filesystem)
 TEST(tar_tests, add_directory_on_the_fly)
 {
     const auto tar_type = tarxx::tarfile::tar_type::ustar;
-    const auto tar_filename = std::filesystem::temp_directory_path() / "test.tar";
+    const auto tar_filename = util::tar_file_name();
+    const tarxx::Platform platform;
 
     tarxx::tarfile f(tar_filename, tar_type);
 
     std::time_t time = std::time(nullptr);
-    f.add_directory("test_dir", 0755, util::uid(), util::gid(), time);
+    f.add_directory("test_dir", 0755, platform.user_id(), platform.group_id(), time);
     f.close();
 
     const auto files = util::files_in_tar_archive(tar_filename);
     EXPECT_EQ(files.size(), 1);
     const auto& file = files.at(0);
-    EXPECT_EQ(file.owner, util::user_name());
-    EXPECT_EQ(file.group, util::group_name());
+    EXPECT_EQ(file.owner, platform.user_name());
+    EXPECT_EQ(file.group, platform.group_name());
     EXPECT_EQ(file.size, 0);
     EXPECT_EQ(file.permissions, "drwxr-xr-x");
 }
 
+#if defined(__linux)
+TEST(tar_tests, add_char_special_device_from_filesystem)
+{
+    const auto tar_type = tarxx::tarfile::tar_type::ustar;
+    const auto tar_filename = util::tar_file_name();
+    tarxx::tarfile f(tar_filename, tar_type);
+    util::file_info test_file {
+            .path = "/dev/random"
+    };
+    std::vector<util::file_info> expected_files = {
+            test_file
+    };
+
+    f.add_from_filesystem(test_file.path);
+    f.close();
+
+    util::expect_files_in_tar(tar_filename, expected_files, tar_type);
+}
+
+#endif
 
 INSTANTIATE_TEST_SUITE_P(tar_type_dependent, tar_tests, ::testing::Values(tarxx::tarfile::tar_type::unix_v7, tarxx::tarfile::tar_type::ustar));

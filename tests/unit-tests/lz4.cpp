@@ -34,14 +34,14 @@ class lz4_tests : public ::testing::TestWithParam<tarxx::tarfile::tar_type> {};
 TEST_P(lz4_tests, add_file_success)
 {
     const auto tar_type = GetParam();
-    const auto tar_filename = std::filesystem::temp_directory_path() / "test.tar"s;
-    const auto lz4_filename = tar_filename.string() + ".lz4";
+    const auto tar_filename = util::tar_file_name();
+    const auto lz4_filename = tar_filename + ".lz4";
     const auto test_file = util::create_test_file(tar_type);
-    util::remove_file_if_exists(tar_filename);
-    util::remove_file_if_exists(lz4_filename);
+    util::remove_if_exists(tar_filename);
+    util::remove_if_exists(lz4_filename);
 
     tarxx::tarfile f(lz4_filename, tarxx::tarfile::compression_mode::lz4, tar_type);
-    f.add_file(test_file.path);
+    f.add_from_filesystem(test_file.path);
     f.close();
 
     util::decompress_lz4(lz4_filename, tar_filename);
@@ -51,14 +51,14 @@ TEST_P(lz4_tests, add_file_success)
 TEST_P(lz4_tests, add_multiple_files_recursive_success)
 {
     const auto tar_type = GetParam();
-    const auto tar_filename = std::filesystem::temp_directory_path() / "test.tar"s;
-    const auto lz4_filename = tar_filename.string() + ".lz4";
+    const auto tar_filename = util::tar_file_name();
+    const auto lz4_filename = tar_filename + ".lz4";
     auto [dir, test_files] = util::create_multiple_test_files_with_sub_folders(tar_type);
-    util::remove_file_if_exists(tar_filename);
-    util::remove_file_if_exists(lz4_filename);
+    util::remove_if_exists(tar_filename);
+    util::remove_if_exists(lz4_filename);
 
     tarxx::tarfile tar_file(lz4_filename, tarxx::tarfile::compression_mode::lz4, tar_type);
-    tar_file.add_files_recursive(dir);
+    tar_file.add_from_filesystem_recursive(dir);
     tar_file.close();
 
     if (tar_type == tarxx::tarfile::tar_type::ustar) {
@@ -67,15 +67,15 @@ TEST_P(lz4_tests, add_multiple_files_recursive_success)
 
     util::decompress_lz4(lz4_filename, tar_filename);
     util::expect_files_in_tar(tar_filename, test_files, tar_type);
-    std::filesystem::remove_all(dir);
+    util::remove_if_exists(dir);
 }
 
 void lz4_validate_streaming_data(const unsigned int size, const tarxx::tarfile::tar_type& tar_type)
 {
-    const auto tar_filename = std::filesystem::temp_directory_path() / "test.tar"s;
-    const auto lz4_filename = tar_filename.string() + ".lz4";
-    util::remove_file_if_exists(tar_filename);
-    util::remove_file_if_exists(lz4_filename);
+    const auto tar_filename = util::tar_file_name();
+    const auto lz4_filename = tar_filename + ".lz4";
+    util::remove_if_exists(tar_filename);
+    util::remove_if_exists(lz4_filename);
 
     const auto input_data = util::create_input_data(size);
     const auto reference_file = util::create_test_file(tar_type, std::filesystem::temp_directory_path() / "test_file", input_data);
