@@ -33,6 +33,7 @@
 
 #include <algorithm>
 #include <array>
+#include <bitset>
 #include <chrono>
 #include <cstddef>
 #include <filesystem>
@@ -46,14 +47,16 @@
 #include <system_error>
 #include <vector>
 
-#if __linux
+#if defined(__linux)
 #    include <cerrno>
 #    include <fcntl.h>
+#    include <ftw.h>
 #    include <grp.h>
 #    include <pwd.h>
 #    include <sys/stat.h>
 #    include <sys/sysmacros.h>
 #    include <sys/types.h>
+#    include <unistd.h>
 #else
 #    error "no support for targeted platform"
 #endif
@@ -62,8 +65,18 @@
 namespace tarxx {
 
     using std::string_literals::operator""s;
+    enum class file_type_flag : char {
+        REGULAR_FILE = '0',
+        HARD_LINK = '1',
+        SYMBOLIC_LINK = '2',
+        CHARACTER_SPECIAL_FILE = '3',
+        BLOCK_SPECIAL_FILE = '4',
+        DIRECTORY = '5',
+        FIFO = '6',
+        CONTIGUOUS_FILE = '7',
+    };
 
-#ifdef __linux
+#if defined(__linux)
     struct errno_exception : std::system_error {
         errno_exception() : std::system_error(std::error_code(errno, std::generic_category())) {}
         using std::system_error::system_error;
@@ -72,13 +85,271 @@ namespace tarxx {
 
     static constexpr int BLOCK_SIZE = 512;
     using block_t = std::array<char, BLOCK_SIZE>;
+    using uid_t = uint32_t;
+    using gid_t = uint32_t;
+    using mod_time_t = int64_t;
+    using tar_size_t = uint64_t;
+    using major_t = uint32_t;
+    using minor_t = uint32_t;
+
+    using mode_t = uint32_t;
+    enum class permission_t : unsigned int {
+        none = 0,
+        owner_read = 0400,
+        owner_write = 0200,
+        owner_exec = 0100,
+        owner_all = 0700,
+        group_read = 040,
+        group_write = 020,
+        group_exec = 010,
+        group_all = 070,
+        others_read = 04,
+        others_write = 02,
+        others_exec = 01,
+        others_all = 07,
+        all_all = static_cast<unsigned int>(tarxx::permission_t::owner_all) | static_cast<unsigned int>(tarxx::permission_t::group_all) | static_cast<unsigned int>(tarxx::permission_t::others_all),
+        mask = 07777
+    };
+
+    struct Filesystem {
+        virtual void iterateDirectory(const std::string& path, std::function<void(const std::string&)>&& cb) const = 0;
+        [[nodiscard]] virtual file_type_flag type_flag(const std::string& path) const = 0;
+        [[nodiscard]] virtual tar_size_t file_size(const std::string& path) const = 0;
+        [[nodiscard]] virtual mod_time_t mod_time(const std::string& path) const = 0;
+        [[nodiscard]] virtual mode_t permissions(const std::string& path) const = 0;
+        [[nodiscard]] virtual std::string read_symlink(const std::string& path) const = 0;
+        [[nodiscard]] virtual bool file_exists(const std::string& path) const = 0;
+
+        static char file_type_to_char(const tarxx::file_type_flag& type)
+        {
+            switch (type) {
+                case tarxx::file_type_flag::SYMBOLIC_LINK:
+                    return 'l';
+                case tarxx::file_type_flag::CHARACTER_SPECIAL_FILE:
+                    return 'c';
+                case tarxx::file_type_flag::BLOCK_SPECIAL_FILE:
+                    return 'b';
+                case tarxx::file_type_flag::DIRECTORY:
+                    return 'd';
+                case tarxx::file_type_flag::FIFO:
+                    return 'p';
+                case tarxx::file_type_flag::REGULAR_FILE:
+                    [[fallthrough]];
+                case tarxx::file_type_flag::HARD_LINK:
+                    [[fallthrough]];
+                case tarxx::file_type_flag::CONTIGUOUS_FILE:
+                    [[fallthrough]];
+                default:
+                    return '-';
+            }
+        }
+
+        [[nodiscard]] std::string permissions_str(const std::string& path) const
+        {
+            const auto mode = permissions(path);
+            std::bitset<9> bits(mode);
+            std::string str = "----------";
+            for (int i = 0; i < bits.size(); i++) {
+                const auto c =
+                        (i % 3 == 2) ? 'r'
+                                     : ((i % 3 == 1)
+                                                ? 'w'
+                                                : 'x');
+                if (static_cast<bool>(bits[i])) {
+                    str[i] = c;
+                }
+            }
+            std::reverse(str.begin(), str.end());
+            const auto type = type_flag(path);
+            str[0] = file_type_to_char(type);
+            return str;
+        }
+    };
+
+    struct OS {
+        [[nodiscard]] virtual uid_t user_id() const = 0;
+        [[nodiscard]] virtual gid_t group_id() const = 0;
+
+        [[nodiscard]] virtual std::string user_name(uid_t uid) const = 0;
+        [[nodiscard]] virtual std::string group_name(gid_t gid) const = 0;
+
+        [[nodiscard]] virtual uid_t file_owner(const std::string& path) const = 0;
+        [[nodiscard]] virtual gid_t file_group(const std::string& path) const = 0;
+
+        virtual void major_minor(const std::string& path, major_t& major, minor_t& minor) const = 0;
+    };
+
+    struct StdFilesytem : public Filesystem {
+        void iterateDirectory(const std::string& path, std::function<void(const std::string&)>&& cb) const override
+        {
+            if (std::filesystem::is_directory(std::filesystem::path(path))) {
+                cb(path);
+                for (const auto& f : std::filesystem::recursive_directory_iterator(path)) {
+                    cb(f.path().string());
+                }
+            } else {
+                cb(path);
+            }
+        }
+
+        [[nodiscard]] file_type_flag type_flag(const std::string& path) const override
+        {
+            // check symlink first because according to std::filesystem
+            // symlinks are also regular files, even though cppreference states otherwise.
+            if (std::filesystem::is_symlink(path)) {
+                return file_type_flag::SYMBOLIC_LINK;
+            } else if (std::filesystem::is_block_file(path)) {
+                return file_type_flag::BLOCK_SPECIAL_FILE;
+            } else if (std::filesystem::is_character_file(path)) {
+                return file_type_flag::CHARACTER_SPECIAL_FILE;
+            } else if (std::filesystem::is_regular_file(path)) {
+                return file_type_flag::REGULAR_FILE;
+            } else if (std::filesystem::is_directory(path)) {
+                return file_type_flag::DIRECTORY;
+            } else if (std::filesystem::is_fifo(path)) {
+                return file_type_flag::FIFO;
+            } else {
+                throw std::invalid_argument("Path is of an unsupported type");
+            }
+        }
+
+        [[nodiscard]] uint64_t file_size(const std::string& path) const override
+        {
+            return std::filesystem::file_size(path);
+        }
+
+        [[nodiscard]] mod_time_t mod_time(const std::string& path) const override
+        {
+            auto file_time = std::filesystem::last_write_time(path);
+            auto system_time = std::chrono::time_point_cast<std::chrono::system_clock::duration>(
+                    file_time - decltype(file_time)::clock::now() + std::chrono::system_clock::now());
+            const auto time_t = std::chrono::system_clock::to_time_t(system_time);
+            return time_t;
+        }
+
+        [[nodiscard]] mode_t permissions(const std::string& path) const override
+        {
+            const auto status = std::filesystem::status(path);
+            const auto perms = status.permissions();
+            using std_perms = std::filesystem::perms;
+            mode_t mode = 0;
+
+            if ((perms & std_perms::owner_read) == std_perms::owner_read) {
+                mode |= static_cast<unsigned int>(permission_t::owner_read);
+            }
+            if ((perms & std_perms::owner_write) == std_perms::owner_write) {
+                mode |= static_cast<unsigned int>(permission_t::owner_write);
+            }
+            if ((perms & std_perms::owner_exec) == std_perms::owner_exec) {
+                mode |= static_cast<unsigned int>(permission_t::owner_exec);
+            }
+            if ((perms & std_perms::group_read) == std_perms::group_read) {
+                mode |= static_cast<unsigned int>(permission_t::group_read);
+            }
+            if ((perms & std_perms::group_write) == std_perms::group_write) {
+                mode |= static_cast<unsigned int>(permission_t::group_write);
+            }
+            if ((perms & std_perms::group_exec) == std_perms::group_exec) {
+                mode |= static_cast<unsigned int>(permission_t::group_exec);
+            }
+            if ((perms & std_perms::others_read) == std_perms::others_read) {
+                mode |= static_cast<unsigned int>(permission_t::others_read);
+            }
+            if ((perms & std_perms::others_write) == std_perms::others_write) {
+                mode |= static_cast<unsigned int>(permission_t::others_write);
+            }
+            if ((perms & std_perms::others_exec) == std_perms::others_exec) {
+                mode |= static_cast<unsigned int>(permission_t::others_exec);
+            }
+            return mode;
+        }
+
+        [[nodiscard]] std::string read_symlink(const std::string& path) const override
+        {
+            return std::filesystem::read_symlink(path);
+        }
+
+        [[nodiscard]] bool file_exists(const std::string& path) const override
+        {
+            return std::filesystem::exists(path);
+        };
+    };
+
+#if defined(__linux)
+    struct PosixOS : OS {
+        [[nodiscard]] std::string user_name(uid_t uid) const override
+        {
+            const auto* const pwd = getpwuid(uid);
+            // keep fields empty if we failed to get the name
+            if (pwd == nullptr) return "";
+            return pwd->pw_name;
+        }
+
+        [[nodiscard]] std::string group_name(gid_t gid) const override
+        {
+            const auto* const group = getgrgid(gid);
+            if (group == nullptr) return "";
+            return group->gr_name;
+        }
+
+        [[nodiscard]] uid_t user_id() const override
+        {
+            const auto pw = passwd();
+            return pw == nullptr ? std::numeric_limits<decltype(pw->pw_uid)>::max() : pw->pw_uid;
+        }
+
+        [[nodiscard]] gid_t group_id() const override
+        {
+            const auto pw = passwd();
+            return pw == nullptr ? std::numeric_limits<decltype(pw->pw_uid)>::max() : pw->pw_gid;
+        }
+
+        void major_minor(const std::string& path, major_t& major, minor_t& minor) const override
+        {
+            const auto file_stat = get_stat(path);
+            major = major(file_stat.st_rdev);
+            minor = minor(file_stat.st_rdev);
+        }
+
+        [[nodiscard]] uid_t file_owner(const std::string& path) const override{
+            const auto file_stat = get_stat(path);
+            return file_stat.st_uid;
+        };
+
+        [[nodiscard]] virtual gid_t file_group(const std::string& path) const override{
+            const auto file_stat = get_stat(path);
+            return file_stat.st_gid;
+        };
+
+    protected:
+        static struct passwd* passwd()
+        {
+            const auto uid = geteuid();
+            return getpwuid(uid);
+        }
+
+        static struct stat get_stat(const std::string& path)
+        {
+            struct stat file_stat {};
+            const auto stat_res = stat(path.c_str(), &file_stat);
+            if (stat_res != 0) throw errno_exception();
+            return file_stat;
+        }
+    };
+#endif
+
+#if defined(__linux)
+    struct Platform : public PosixOS, public StdFilesytem {
+    };
+#else
+#    error "no support for targeted platform"
+#endif
 
     struct tarfile {
 
         enum class tar_type {
             unix_v7,
             ustar,
-            //TODO support for utar, star, etc.
         };
 
         using callback_t = std::function<void(const block_t&, size_t size)>;
@@ -169,31 +440,14 @@ namespace tarxx {
             }
         }
 
-#ifdef __cpp_lib_filesystem
-        void add_files_recursive(const std::filesystem::path& path)
+        void add_from_filesystem_recursive(const std::string& path)
         {
-            const auto add = [&](const std::filesystem::path& p) {
-                if (std::filesystem::is_regular_file(p)) {
-                    add_file(p.string());
-                } else if (std::filesystem::is_directory(path)) {
-                    if (type_ == tar_type::ustar)
-                        add_directory(path);
-                } else {
-                    throw std::invalid_argument(path.string() + " is neither a regular file, nor a directory");
-                }
-            };
-
-            if (is_directory(path)) {
-                add(path);
-                for (const auto& f : std::filesystem::recursive_directory_iterator(path)) {
-                    add(f);
-                }
-            } else {
-                add(path);
-            }
+            platform_.iterateDirectory(path, [&](const std::string& callback_path) {
+                add_from_filesystem(callback_path);
+            });
         }
-#endif
-        void add_directory(const std::string& dirname)
+
+        void add_from_filesystem(const std::string& filename)
         {
             check_state();
 
@@ -202,24 +456,15 @@ namespace tarxx {
                 lz4_flush();
             }
 #endif
-            write_header(dirname, file_type_flag::DIRECTORY);
+            read_from_filesystem_write_to_tar(filename);
         }
 
-#ifdef __linux
-        void add_directory(const std::string& dirname, __mode_t mode, __uid_t uid, __gid_t gid, __time_t mod_time)
+        void add_link(const std::string& file_name, const std::string& link_name, uid_t uid, gid_t gid, mod_time_t time)
         {
-            check_state();
-
-#    ifdef WITH_LZ4
-            if (compression_ == compression_mode::lz4) {
-                lz4_flush();
-            }
-#    endif
-            write_header(dirname, mode, uid, gid, 0, mod_time, file_type_flag::DIRECTORY);
+            write_header(link_name, static_cast<mode_t>(tarxx::permission_t::all_all), uid, gid, 0U, time, file_type_flag::SYMBOLIC_LINK, 0U, 0U, file_name);
         }
-#endif
-        // TODO add support for adding directories
-        void add_file(const std::string& filename)
+
+        void add_directory(const std::string& dirname, mode_t mode, uid_t uid, gid_t gid, mod_time_t mod_time)
         {
             check_state();
 
@@ -228,16 +473,9 @@ namespace tarxx {
                 lz4_flush();
             }
 #endif
-            block_t block;
-            std::fstream infile(filename, std::ios::in | std::ios::binary);
-            if (!infile.is_open()) throw std::runtime_error("Can't find input file " + filename);
-            write_header(filename, file_type_flag::REGULAR_FILE);
-            while (infile.good()) {
-                infile.read(block.data(), block.size());
-                const auto read = infile.gcount();
-                if (read < block.size()) std::fill_n(block.begin() + read, block.size() - read, 0);
-                write(block);
-            }
+            // size for directories is always 0
+            const auto size = 0;
+            write_header(dirname, mode, uid, gid, size, mod_time, file_type_flag::DIRECTORY);
         }
 
         void add_file_streaming()
@@ -295,8 +533,7 @@ namespace tarxx {
             stream_block_used_ += size;
         }
 
-#ifdef __linux
-        void stream_file_complete(const std::string& filename, __mode_t mode, __uid_t uid, __gid_t gid, __off_t size, __time_t mod_time)
+        void stream_file_complete(const std::string& filename, mode_t mode, uid_t uid, gid_t gid, tar_size_t size, mod_time_t mod_time)
         {
             if (stream_file_header_pos_ < 0) throw std::logic_error("Can't finish stream file, none is in progress");
 
@@ -307,11 +544,11 @@ namespace tarxx {
             write(block);
 
             // flush is necessary so seek to the correct positions
-#    ifdef WITH_LZ4
+#ifdef WITH_LZ4
             if (compression_ == compression_mode::lz4) {
                 lz4_flush();
             }
-#    endif
+#endif
 
             // seek to header
             const auto stream_pos = file_.tellp();
@@ -320,7 +557,6 @@ namespace tarxx {
             stream_file_header_pos_ = -1;
             file_.seekp(stream_pos);
         }
-#endif
 
     private:
         // Offsets
@@ -358,18 +594,6 @@ namespace tarxx {
         static constexpr unsigned int USTAR_HEADER_LEN_DEVMAJOR = 8U;
         static constexpr unsigned int USTAR_HEADER_LEN_DEVMINOR = 8U;
         static constexpr unsigned int USTAR_HEADER_LEN_PREFIX = 155U;
-
-        enum class file_type_flag : char {
-            REGULAR_FILE = '0',
-            HARD_LINK = '1',
-            SYMBOLIC_LINK = '2',
-            CHARACTER_SPECIAL_FILE = '3',
-            BLOCK_SPECIAL_FILE = '4',
-            DIRECTORY = '5',
-            FIFO = '6',
-            CONTIGUOUS_FILE = '7',
-        };
-
 
 #ifdef WITH_LZ4
         template<typename F, typename... Args>
@@ -441,51 +665,102 @@ namespace tarxx {
 #endif
         }
 
-        void write_header(const std::string& name, const file_type_flag& file_type)
+        bool is_file_type_supported(const file_type_flag& type_flag)
         {
-#ifdef __linux
-            struct ::stat buffer {};
-            const auto stat_result = ::stat(name.c_str(), &buffer);
-            if (stat_result != 0) {
-                throw errno_exception();
+            const auto int_type_flag = static_cast<int>(type_flag);
+            switch (type_) {
+                case tar_type::unix_v7:
+                    return int_type_flag <= static_cast<int>(file_type_flag::SYMBOLIC_LINK);
+                case tar_type::ustar:
+                    return true;
+                default:
+                    throw std::invalid_argument("type flag is not supported: " + std::to_string(int_type_flag));
+            }
+        }
+
+        void write_regular_file(const std::string& name)
+        {
+            block_t block {};
+            std::fstream infile(name, std::ios::in | std::ios::binary);
+            if (!infile.is_open()) throw std::runtime_error("Can't find input file " + name);
+            while (infile.good()) {
+                infile.read(block.data(), block.size());
+                const auto read = infile.gcount();
+                if (read < block.size()) std::fill_n(block.begin() + read, block.size() - read, 0);
+                write(block);
+            }
+        }
+
+        void read_from_filesystem_write_to_tar(const std::string& path)
+        {
+            if (!platform_.file_exists(path)) {
+                throw std::invalid_argument(path + " does not exist");
             }
 
-            unsigned int dev_major = 0;
-            unsigned int dev_minor = 0;
+            std::function<void()> write_data;
+
+            tar_size_t size = 0;
+            major_t dev_major = 0;
+            minor_t dev_minor = 0;
+            std::string link_name;
+            mode_t mode = platform_.permissions(path);
+            const auto file_uid = platform_.file_owner(path);
+            const auto file_gid = platform_.file_group(path);
+
             // Store the device major number (for block or character devices).
-            // todo write a test for this
-            if (S_ISBLK(buffer.st_mode) || S_ISCHR(buffer.st_mode)) {
-                dev_major = major(buffer.st_rdev);
-                dev_minor = minor(buffer.st_rdev);
+            const auto file_type = platform_.type_flag(path);
+            // ignore unsupported file types.
+            // i.e. directories for tar v7
+            if (!is_file_type_supported(file_type)) {
+                return;
             }
 
             switch (file_type) {
                 case file_type_flag::REGULAR_FILE:
-                    if (!S_ISREG(buffer.st_mode)) throw std::invalid_argument("path is not a file");
+                    write_data = [&]() {
+                        write_regular_file(path);
+                    };
+                    size = platform_.file_size(path);
                     break;
-                case file_type_flag::DIRECTORY:
-                    if (!S_ISDIR(buffer.st_mode)) throw std::invalid_argument("path is not a directory");
+                case file_type_flag::CHARACTER_SPECIAL_FILE:
+                    [[fallthrough]];
+                case file_type_flag::BLOCK_SPECIAL_FILE:
+                    platform_.major_minor(path, dev_major, dev_minor);
+                    break;
+                case file_type_flag::SYMBOLIC_LINK:
+                    mode = static_cast<mode_t>(permission_t::all_all);
+                    link_name = platform_.read_symlink(path);
                     break;
                 case file_type_flag::HARD_LINK:
-                case file_type_flag::SYMBOLIC_LINK:
-                case file_type_flag::CHARACTER_SPECIAL_FILE:
-                case file_type_flag::BLOCK_SPECIAL_FILE:
+                    [[fallthrough]];
+                case file_type_flag::DIRECTORY:
+                    [[fallthrough]];
                 case file_type_flag::FIFO:
+                    [[fallthrough]];
                 case file_type_flag::CONTIGUOUS_FILE:
-                    throw std::invalid_argument("Not supported yet");
+                    break;
             }
 
-            if (S_ISDIR(buffer.st_mode)) {
-                buffer.st_size = 0;
-            }
+            write_header(
+                    path,
+                    mode,
+                    file_uid,
+                    file_gid,
+                    size,
+                    platform_.mod_time(path),
+                    file_type,
+                    dev_major,
+                    dev_minor,
+                    link_name);
 
-            write_header(name, buffer.st_mode & ALLPERMS, buffer.st_uid, buffer.st_gid, buffer.st_size, buffer.st_mtim.tv_sec, file_type, dev_major, dev_minor);
-#endif
+            if (write_data) {
+                write_data();
+            }
         }
 
-        void write_header(const std::string& name, __mode_t mode, __uid_t uid, __gid_t gid, __off_t size, __time_t time, const file_type_flag& file_type, unsigned int dev_major = 0, unsigned int dev_minor = 0)
+        void write_header(const std::string& name, mode_t mode, uid_t uid, gid_t gid, tar_size_t size, mod_time_t time, const file_type_flag& file_type, major_t dev_major = 0, minor_t dev_minor = 0, const std::string& link_name = "")
         {
-#ifdef __linux
+#if defined(__linux)
             if (type_ != tar_type::unix_v7 && type_ != tar_type::ustar) throw std::logic_error("unsupported tar format");
             if (type_ == tar_type::unix_v7 && (static_cast<int>(file_type) > static_cast<int>(file_type_flag::SYMBOLIC_LINK))) throw std::logic_error("unsupported file type for tarv7 format");
 
@@ -497,17 +772,22 @@ namespace tarxx {
             write_into_block(header, time, UNIX_V7_USTAR_HEADER_POS_MTIM, UNIX_V7_USTAR_HEADER_LEN_MTIM);
             write_into_block(header, static_cast<char>(file_type), UNIX_V7_USTAR_HEADER_POS_TYPEFLAG, UNIX_V7_USTAR_HEADER_LEN_TYPEFLAG);
             write_name_and_prefix(header, name);
-            //TODO link indicator (file type)
-            //TODO name of linked file
+
+            if (!link_name.empty()) {
+                write_into_block(header, link_name, UNIX_V7_USTAR_HEADER_POS_LINKNAME, UNIX_V7_USTAR_HEADER_LEN_LINKNAME);
+            }
 
             if (type_ == tar_type::ustar) {
                 write_into_block(header, "ustar", USTAR_HEADER_POS_MAGIC, USTAR_HEADER_LEN_MAGIC);
-                write_user_name(header, uid);
-                write_group_name(header, gid);
+
+                write_into_block(header, platform_.user_name(uid), USTAR_HEADER_POS_UNAME, USTAR_HEADER_LEN_UNAME);
+                write_into_block(header, platform_.group_name(gid), USTAR_HEADER_POS_GNAME, USTAR_HEADER_LEN_GNAME);
 
                 write_into_block(header, to_octal_ascii(dev_major, USTAR_HEADER_LEN_DEVMAJOR), USTAR_HEADER_POS_DEVMAJOR, USTAR_HEADER_LEN_DEVMAJOR);
                 write_into_block(header, to_octal_ascii(dev_minor, USTAR_HEADER_LEN_DEVMAJOR), USTAR_HEADER_POS_DEVMINOR, USTAR_HEADER_LEN_DEVMINOR);
             }
+#else
+#    error "no support for targeted platform"
 #endif
 
             calc_and_write_checksum(header);
@@ -564,26 +844,6 @@ namespace tarxx {
                     write_into_block(block, name, USTAR_HEADER_POS_PREFIX, last_slash_index);
                 }
             }
-        }
-
-        static void write_user_name(block_t& block, __uid_t uid)
-        {
-#ifdef __linux
-            const auto* const pwd = getpwuid(uid);
-            // keep fields empty if we failed to get the name
-            if (pwd == nullptr) return;
-
-            write_into_block(block, pwd->pw_name, USTAR_HEADER_POS_UNAME, USTAR_HEADER_LEN_UNAME);
-#endif
-        }
-
-        static void write_group_name(block_t& block, __gid_t gid)
-        {
-#ifdef __linux
-            const auto* const group = getgrgid(gid);
-            if (group == nullptr) return;
-            write_into_block(block, group->gr_name, USTAR_HEADER_POS_GNAME, USTAR_HEADER_LEN_GNAME);
-#endif
         }
 
         void check_state()
@@ -649,6 +909,8 @@ namespace tarxx {
         block_t stream_block_;
         size_t stream_block_used_;
 
+        Platform platform_;
+
 #ifdef WITH_COMPRESSION
         compression_mode compression_ = compression_mode::none;
 #endif
@@ -673,7 +935,6 @@ namespace tarxx {
         private:
             LZ4F_compressionContext_t ctx_ = nullptr;
         };
-
         std::unique_ptr<lz4_ctx> lz4_ctx_;
         std::vector<char> lz4_out_buf_;
         size_t lz4_out_buf_pos_ = 0;

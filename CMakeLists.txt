@@ -8,6 +8,7 @@ ENDIF()
 option(WITH_COMPRESSION "Set to ON to enable compression support without any algorithms" OFF)
 option(WITH_EXAMPLE "Set to ON to build the example" OFF)
 option(WITH_TESTS "Set to ON to build tests" OFF)
+option(WITH_LZ4 "Set to ON to enable lz4 support" OFF)
 
 set(LIB_NAME tarxx)
 set(${LIB_NAME}_COMPILE_DEFINITIONS "")
@@ -18,13 +19,14 @@ find_package(PkgConfig REQUIRED)
 
 add_library(${LIB_NAME} INTERFACE)
 target_include_directories(${LIB_NAME} INTERFACE ${CMAKE_CURRENT_LIST_DIR}/include)
+
 if(${CMAKE_VERSION} VERSION_LESS "3.19.0")
     target_compile_features(${LIB_NAME} INTERFACE cxx_std_17)
 else()
     set_target_properties(${LIB_NAME} PROPERTIES
-        CXX_STANDARD 17
-        CXX_STANDARD_REQUIRED ON
-        CXX_EXTENSIONS OFF)
+            CXX_STANDARD 17
+            CXX_STANDARD_REQUIRED ON
+            CXX_EXTENSIONS OFF)
 endif()
 
 if (WITH_COMPRESSION)
@@ -61,3 +63,9 @@ endif()
 if (WITH_TESTS)
     add_subdirectory(tests)
 endif()
+
+message(STATUS "WITH_EXAMPLE = ${WITH_EXAMPLE}" )
+message(STATUS "WITH_TESTS = ${WITH_TESTS}" )
+message(STATUS "WITH_COMPRESSION = ${WITH_COMPRESSION}" )
+message(STATUS "WITH_LZ4 = ${WITH_LZ4}" )
+
