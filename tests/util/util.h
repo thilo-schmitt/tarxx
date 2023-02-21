@@ -47,13 +47,14 @@ namespace util {
         std::string permissions;
         std::string owner;
         std::string group;
-        uint64_t size = 0;
+        tarxx::size_t size = 0;
         std::string date;
         std::string time;
         std::string path;
         std::string link_name;
         struct timespec mtime;
         tarxx::mode_t mode;
+        std::string device_type;
     };
 
     inline std::vector<std::string> split_string(const std::string& str, const char& delim)
@@ -92,6 +93,7 @@ namespace util {
 
     inline int execute_with_output(const std::string& cmd, std::string& std_out)
     {
+#if defined(__linux)
         constexpr const auto buf_size = 256;
         std::array<char, buf_size> buffer {};
 
@@ -104,6 +106,9 @@ namespace util {
         }
 
         return pclose(pipe);
+#else
+#    error "no support for targeted platform"
+#endif
     }
 
     enum class tar_version {
@@ -142,38 +147,41 @@ namespace util {
             // gnu tar output
             // line from tar might look like this
             // "-rw-r--r-- 1422250/880257   12 2022-09-16 12:26 /tmp/test"
-            // links have 8 parts
             if (shell_tar == tar_version::gnu) {
                 const auto permissions = tokens.at(0);
                 const auto file_type = permissions.at(0);
                 const auto owner_group = split_string(tokens.at(1), '/');
                 std::string name;
                 std::string link_name;
-                if (tokens.size() == 6U) {
-                    name = tokens.at(5);
+                tarxx::size_t size = std::stoul(tokens.at(2));
+                std::string date = tokens.at(3);
+                std::string time = tokens.at(4);
+                std::string device_type;
+                if (file_type == 'l') {
+                    link_name = tokens.at(5);
+                    name = tokens.at(7);
+                } else if (file_type == 'c' || file_type == 'b') {
+                    name = tokens.at(6);
+                    date = tokens.at(4);
+                    time = tokens.at(5);
+                    device_type = tokens.at(2) + "," + tokens.at(3);
+                    size = 0;
                 } else {
-                    if (permissions.at(0) == 'l') {
-                        link_name = tokens.at(5);
-                        name = tokens.at(7);
-                    } else if (permissions.at(0) == 'c') {
-                    } else {
-                        throw std::runtime_error(std::string("Unsupported file type: ") + file_type);
-                    }
-
-
+                    name = tokens.at(5);
                 }
+
                 infos.emplace_back(file_info {
-                        tokens.at(0),
-                        owner_group.at(0),
-                        owner_group.at(1),
-                        std::stoul(tokens.at(2)),
-                        tokens.at(3),
-                        tokens.at(4),
+                        .permissions = tokens.at(0),
+                        .owner = owner_group.at(0),
+                        .group = owner_group.at(1),
+                        .size = size,
+                        .date = date,
+                        .time = time,
                         // paths with spaces are not supported
                         // as this is used for tests only it should be okay
-                        name,
-                        link_name,
-                });
+                        .path = name,
+                        .link_name = link_name,
+                        .device_type = device_type});
             } else if (shell_tar == tar_version::bsd) {
                 // just assume that the files where from this year
                 const auto year = []() {
@@ -220,14 +228,16 @@ namespace util {
     inline void file_info_set_stat(file_info& file, const tarxx::tarfile::tar_type& tar_type)
     {
         const tarxx::Platform platform;
+        const auto owner = platform.file_owner(file.path);
+        const auto group = platform.file_group(file.path);
         switch (tar_type) {
             case tarxx::tarfile::tar_type::unix_v7:
-                file.owner = std::to_string(platform.user_id());
-                file.group = std::to_string(platform.group_id());
+                file.owner = std::to_string(owner);
+                file.group = std::to_string(group);
                 break;
             case tarxx::tarfile::tar_type::ustar:
-                file.owner = platform.user_name();
-                file.group = platform.group_name();
+                file.owner = platform.user_name(owner);
+                file.group = platform.group_name(group);
                 break;
         }
 
@@ -244,15 +254,24 @@ namespace util {
         strftime(buf.data(), buf.size(), "%H:%M", std::localtime(&mtime_time_t));
         file.time = std::string(buf.data());
 
+        // set defaults, might be overwritten by special file types
+        file.permissions = platform.permissions_str(file.path);
+        file.mode = platform.permissions(file.path);
+
         if (std::filesystem::is_symlink(file.path)) {
             file.link_name = file.path;
             file.path = platform.read_symlink(file.link_name);
             file.permissions = "lrwxrwxrwx";
             file.mode = static_cast<tarxx::mode_t>(tarxx::permission_t::all_all);
             file.size = 0U;
-        } else {
-            file.permissions = platform.permissions_str(file.path);
-            file.mode = platform.permissions(file.path);
+        } else if (std::filesystem::is_character_file(file.path) || std::filesystem::is_block_file(file.path)) {
+            file.size = 0U;
+            tarxx::major_t major;
+            tarxx::minor_t minor;
+            platform.major_minor(file.path, major, minor);
+            std::stringstream ss;
+            ss << major << "," << minor;
+            file.device_type = ss.str();
         }
     }
 
@@ -339,11 +358,9 @@ namespace util {
         EXPECT_EQ(test_file.size, file_in_tar.size);
         EXPECT_EQ(test_file.date, file_in_tar.date);
         EXPECT_EQ(test_file.permissions, file_in_tar.permissions);
-
-#ifdef __linux
         EXPECT_EQ(file_in_tar.owner, test_file.owner);
         EXPECT_EQ(file_in_tar.group, test_file.group);
-#endif
+        EXPECT_EQ(file_in_tar.device_type, test_file.device_type);
     }
 
     inline void tar_has_one_file_and_matches(const std::string& tar_filename, const file_info& reference_file, const tarxx::tarfile::tar_type& tar_type)

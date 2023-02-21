@@ -337,11 +337,13 @@ TEST_P(tar_tests, add_link_on_the_fly)
     tarxx::tarfile tar_file(tar_filename, tar_type);
     const auto file_name = "file";
     const auto link_name = "link";
-    tar_file.add_link(file_name, link_name, platform.user_id(), platform.group_id(), 0);
+    const auto user = platform.user_id();
+    const auto group = platform.group_id();
+    tar_file.add_link(file_name, link_name, user, group, 0);
     util::file_info fake_link {
             .permissions = "lrwxrwxrwx",
-            .owner = tar_type == tarxx::tarfile::tar_type::ustar ? platform.user_name() : std::to_string(platform.user_id()),
-            .group = tar_type == tarxx::tarfile::tar_type::ustar ? platform.group_name() : std::to_string(platform.group_id()),
+            .owner = tar_type == tarxx::tarfile::tar_type::ustar ? platform.user_name(user) : std::to_string(group),
+            .group = tar_type == tarxx::tarfile::tar_type::ustar ? platform.group_name(group) : std::to_string(group),
             .size = 0U,
             .date = "1970-01-01",
             .time = "00:00",
@@ -440,14 +442,16 @@ TEST(tar_tests, add_directory_on_the_fly)
     tarxx::tarfile f(tar_filename, tar_type);
 
     std::time_t time = std::time(nullptr);
-    f.add_directory("test_dir", 0755, platform.user_id(), platform.group_id(), time);
+    const auto user = platform.user_id();
+    const auto group = platform.group_id();
+    f.add_directory("test_dir", 0755, user, group, time);
     f.close();
 
     const auto files = util::files_in_tar_archive(tar_filename);
     EXPECT_EQ(files.size(), 1);
     const auto& file = files.at(0);
-    EXPECT_EQ(file.owner, platform.user_name());
-    EXPECT_EQ(file.group, platform.group_name());
+    EXPECT_EQ(file.owner, platform.user_name(user));
+    EXPECT_EQ(file.group, platform.group_name(group));
     EXPECT_EQ(file.size, 0);
     EXPECT_EQ(file.permissions, "drwxr-xr-x");
 }
@@ -459,11 +463,10 @@ TEST(tar_tests, add_char_special_device_from_filesystem)
     const auto tar_filename = util::tar_file_name();
     tarxx::tarfile f(tar_filename, tar_type);
     util::file_info test_file {
-            .path = "/dev/random"
-    };
+            .path = "/dev/random"};
+    util::file_info_set_stat(test_file, tar_type);
     std::vector<util::file_info> expected_files = {
-            test_file
-    };
+            test_file};
 
     f.add_from_filesystem(test_file.path);
     f.close();
@@ -471,6 +474,28 @@ TEST(tar_tests, add_char_special_device_from_filesystem)
     util::expect_files_in_tar(tar_filename, expected_files, tar_type);
 }
 
+TEST(tar_tests, add_char_special_device_on_the_fly)
+{
+    const auto tar_type = tarxx::tarfile::tar_type::ustar;
+    const auto tar_filename = util::tar_file_name();
+    tarxx::tarfile f(tar_filename, tar_type);
+    util::file_info test_file {
+            .path = "/dev/random"};
+    util::file_info_set_stat(test_file, tar_type);
+    std::vector<util::file_info> expected_files = {
+            test_file};
+
+    tarxx::Platform platform;
+    const auto owner = platform.file_owner(test_file.path);
+    const auto group = platform.file_group(test_file.path);
+    tarxx::major_t major;
+    tarxx::minor_t minor;
+    platform.major_minor(test_file.path, major, minor);
+    f.add_character_special_file(test_file.path, test_file.mode, owner, group, test_file.size, test_file.mtime.tv_sec,  major, minor);
+    f.close();
+
+    util::expect_files_in_tar(tar_filename, expected_files, tar_type);
+}
 #endif
 
 INSTANTIATE_TEST_SUITE_P(tar_type_dependent, tar_tests, ::testing::Values(tarxx::tarfile::tar_type::unix_v7, tarxx::tarfile::tar_type::ustar));
