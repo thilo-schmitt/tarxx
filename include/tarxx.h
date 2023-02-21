@@ -473,7 +473,7 @@ namespace tarxx {
             write_header(name, mode, uid, gid, size, time, file_type_flag::BLOCK_SPECIAL_FILE, dev_major, dev_minor);
         }
 
-        void add_fifo(const std::string &name, mode_t mode, uid_t uid, gid_t gid, mod_time_t time)
+        void add_fifo(const std::string& name, mode_t mode, uid_t uid, gid_t gid, mod_time_t time)
         {
             check_state_and_flush();
             write_header(name, mode, uid, gid, 0, time, file_type_flag::FIFO);

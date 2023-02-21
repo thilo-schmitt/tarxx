@@ -98,7 +98,7 @@ TEST_P(tar_tests, add_directory_while_file_streaming_in_progress)
     const auto tar_filename = util::tar_file_name();
     tarxx::tarfile f(tar_filename, tar_type);
     f.add_file_streaming();
-    EXPECT_THROW(f.add_directory("foobar",0,0,0,0), std::logic_error);
+    EXPECT_THROW(f.add_directory("foobar", 0, 0, 0, 0), std::logic_error);
 }
 
 TEST_P(tar_tests, add_link_while_file_streaming_in_progress)
@@ -107,30 +107,30 @@ TEST_P(tar_tests, add_link_while_file_streaming_in_progress)
     const auto tar_filename = util::tar_file_name();
     tarxx::tarfile f(tar_filename, tar_type);
     f.add_file_streaming();
-    EXPECT_THROW(f.add_link("foobar",  "link",0,0,0), std::logic_error);
+    EXPECT_THROW(f.add_link("foobar", "link", 0, 0, 0), std::logic_error);
 }
 
 TEST(tar_tests, add_block_device_while_file_streaming_in_progress)
 {
-    const auto tar_type =  tarxx::tarfile::tar_type::ustar;
+    const auto tar_type = tarxx::tarfile::tar_type::ustar;
     const auto tar_filename = util::tar_file_name();
     tarxx::tarfile f(tar_filename, tar_type);
     f.add_file_streaming();
-    EXPECT_THROW(f.add_block_special_file("foobar", 0, 0, 0, 0,0,0,0), std::logic_error);
+    EXPECT_THROW(f.add_block_special_file("foobar", 0, 0, 0, 0, 0, 0, 0), std::logic_error);
 }
 
 TEST(tar_tests, add_char_device_while_file_streaming_in_progress)
 {
-    const auto tar_type =  tarxx::tarfile::tar_type::ustar;
+    const auto tar_type = tarxx::tarfile::tar_type::ustar;
     const auto tar_filename = util::tar_file_name();
     tarxx::tarfile f(tar_filename, tar_type);
     f.add_file_streaming();
-    EXPECT_THROW(f.add_block_special_file("foobar", 0, 0, 0, 0,0,0,0), std::logic_error);
+    EXPECT_THROW(f.add_block_special_file("foobar", 0, 0, 0, 0, 0, 0, 0), std::logic_error);
 }
 
 TEST(tar_tests, add_fifo_while_file_streaming_in_progress)
 {
-    const auto tar_type =  tarxx::tarfile::tar_type::ustar;
+    const auto tar_type = tarxx::tarfile::tar_type::ustar;
     const auto tar_filename = util::tar_file_name();
     tarxx::tarfile f(tar_filename, tar_type);
     f.add_file_streaming();
@@ -544,7 +544,7 @@ TEST(tar_tests, add_char_special_device_on_the_fly)
     tarxx::major_t major;
     tarxx::minor_t minor;
     platform.major_minor(test_file.path, major, minor);
-    f.add_character_special_file(test_file.path, test_file.mode, owner, group, test_file.size, test_file.mtime.tv_sec,  major, minor);
+    f.add_character_special_file(test_file.path, test_file.mode, owner, group, test_file.size, test_file.mtime.tv_sec, major, minor);
     f.close();
 
     util::expect_files_in_tar(tar_filename, expected_files, tar_type);

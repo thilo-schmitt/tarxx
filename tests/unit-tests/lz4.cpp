@@ -153,7 +153,7 @@ TEST(lz4_tests, add_char_special_device_on_the_fly)
     tarxx::major_t major;
     tarxx::minor_t minor;
     platform.major_minor(test_file.path, major, minor);
-    f.add_character_special_file(test_file.path, test_file.mode, owner, group, test_file.size, test_file.mtime.tv_sec,  major, minor);
+    f.add_character_special_file(test_file.path, test_file.mode, owner, group, test_file.size, test_file.mtime.tv_sec, major, minor);
     f.close();
     util::decompress_lz4(lz4_filename, tar_filename);
 
