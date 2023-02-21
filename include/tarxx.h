@@ -451,61 +451,45 @@ namespace tarxx {
 
         void add_from_filesystem(const std::string& filename)
         {
-            check_state();
-
-#ifdef WITH_LZ4
-            if (compression_ == compression_mode::lz4) {
-                lz4_flush();
-            }
-#endif
+            check_state_and_flush();
             read_from_filesystem_write_to_tar(filename);
         }
 
         void add_link(const std::string& file_name, const std::string& link_name, uid_t uid, gid_t gid, mod_time_t time)
         {
+            check_state_and_flush();
             write_header(link_name, static_cast<mode_t>(tarxx::permission_t::all_all), uid, gid, 0U, time, file_type_flag::SYMBOLIC_LINK, 0U, 0U, file_name);
         }
 
         void add_character_special_file(const std::string& name, mode_t mode, uid_t uid, gid_t gid, size_t size, mod_time_t time, major_t dev_major, minor_t dev_minor)
         {
+            check_state_and_flush();
             write_header(name, mode, uid, gid, size, time, file_type_flag::CHARACTER_SPECIAL_FILE, dev_major, dev_minor);
         }
 
         void add_block_special_file(const std::string& name, mode_t mode, uid_t uid, gid_t gid, size_t size, mod_time_t time, major_t dev_major, minor_t dev_minor)
         {
+            check_state_and_flush();
             write_header(name, mode, uid, gid, size, time, file_type_flag::BLOCK_SPECIAL_FILE, dev_major, dev_minor);
         }
 
         void add_fifo(const std::string &name, mode_t mode, uid_t uid, gid_t gid, mod_time_t time)
         {
+            check_state_and_flush();
             write_header(name, mode, uid, gid, 0, time, file_type_flag::FIFO);
         }
 
         void add_directory(const std::string& dirname, mode_t mode, uid_t uid, gid_t gid, mod_time_t mod_time)
         {
-            check_state();
-
-#ifdef WITH_LZ4
-            if (compression_ == compression_mode::lz4) {
-                lz4_flush();
-            }
-#endif
-            // size for directories is always 0
-            const auto size = 0;
-            write_header(dirname, mode, uid, gid, size, mod_time, file_type_flag::DIRECTORY);
+            check_state_and_flush();
+            write_header(dirname, mode, uid, gid, 0, mod_time, file_type_flag::DIRECTORY);
         }
 
         void add_file_streaming()
         {
-            check_state();
             if (mode_ != output_mode::file_output) throw std::logic_error(__func__ + " only supports output mode file"s);
+            check_state_and_flush();
 
-                // flush is necessary to get the correct position of the header
-#ifdef WITH_LZ4
-            if (compression_ == compression_mode::lz4) {
-                lz4_flush();
-            }
-#endif
             // write empty header
             stream_file_header_pos_ = file_.tellg();
             block_t header {};
@@ -862,10 +846,16 @@ namespace tarxx {
             }
         }
 
-        void check_state()
+        void check_state_and_flush()
         {
             if (!is_open()) throw std::logic_error("Cannot add file, tar archive is not open");
             if (stream_file_header_pos_ >= 0) throw std::logic_error("Can't add new file while adding streaming data isn't completed");
+
+#ifdef WITH_LZ4
+            if (compression_ == compression_mode::lz4) {
+                lz4_flush();
+            }
+#endif
         }
 
 #ifdef WITH_LZ4
