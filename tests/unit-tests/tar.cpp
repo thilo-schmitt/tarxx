@@ -84,6 +84,59 @@ TEST_P(tar_tests, add_file_streaming_data_when_file_is_not_open_throws)
     EXPECT_THROW(f.add_file_streaming_data("a", 1), std::logic_error);
 }
 
+TEST_P(tar_tests, add_file_streaming_data_before_adding_file)
+{
+    const auto tar_type = GetParam();
+    const auto tar_filename = util::tar_file_name();
+    tarxx::tarfile f(tar_filename, tar_type);
+    EXPECT_THROW(f.add_file_streaming_data("a", 1), std::logic_error);
+}
+
+TEST_P(tar_tests, add_directory_while_file_streaming_in_progress)
+{
+    const auto tar_type = GetParam();
+    const auto tar_filename = util::tar_file_name();
+    tarxx::tarfile f(tar_filename, tar_type);
+    f.add_file_streaming();
+    EXPECT_THROW(f.add_directory("foobar",0,0,0,0), std::logic_error);
+}
+
+TEST_P(tar_tests, add_link_while_file_streaming_in_progress)
+{
+    const auto tar_type = GetParam();
+    const auto tar_filename = util::tar_file_name();
+    tarxx::tarfile f(tar_filename, tar_type);
+    f.add_file_streaming();
+    EXPECT_THROW(f.add_link("foobar",  "link",0,0,0), std::logic_error);
+}
+
+TEST(tar_tests, add_block_device_while_file_streaming_in_progress)
+{
+    const auto tar_type =  tarxx::tarfile::tar_type::ustar;
+    const auto tar_filename = util::tar_file_name();
+    tarxx::tarfile f(tar_filename, tar_type);
+    f.add_file_streaming();
+    EXPECT_THROW(f.add_block_special_file("foobar", 0, 0, 0, 0,0,0,0), std::logic_error);
+}
+
+TEST(tar_tests, add_char_device_while_file_streaming_in_progress)
+{
+    const auto tar_type =  tarxx::tarfile::tar_type::ustar;
+    const auto tar_filename = util::tar_file_name();
+    tarxx::tarfile f(tar_filename, tar_type);
+    f.add_file_streaming();
+    EXPECT_THROW(f.add_block_special_file("foobar", 0, 0, 0, 0,0,0,0), std::logic_error);
+}
+
+TEST(tar_tests, add_fifo_while_file_streaming_in_progress)
+{
+    const auto tar_type =  tarxx::tarfile::tar_type::ustar;
+    const auto tar_filename = util::tar_file_name();
+    tarxx::tarfile f(tar_filename, tar_type);
+    f.add_file_streaming();
+    EXPECT_THROW(f.add_fifo("foobar", 0, 0, 0, 0), std::logic_error);
+}
+
 TEST_P(tar_tests, double_close)
 {
     const auto tar_type = GetParam();
@@ -530,7 +583,7 @@ TEST(tar_tests, add_fifo_on_the_fly)
     const auto group = platform.file_group(test_file.path);
 
     tarxx::tarfile f(tar_filename, tar_type);
-    f.add_fifo(test_file.path, test_file.mode, owner, group, test_file.size, test_file.mtime.tv_sec);
+    f.add_fifo(test_file.path, test_file.mode, owner, group, test_file.mtime.tv_sec);
     f.close();
 
     std::vector<util::file_info> expected_files = {test_file};
