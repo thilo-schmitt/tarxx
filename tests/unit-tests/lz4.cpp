@@ -106,4 +106,86 @@ TEST_P(lz4_tests, add_file_stream_data_multi_block)
     lz4_validate_streaming_data(tarxx::BLOCK_SIZE * 1.52, tar_type);
 }
 
+TEST(lz4_tests, add_directory_on_the_fly)
+{
+    const auto tar_type = tarxx::tarfile::tar_type::ustar;
+    const auto tar_filename = util::tar_file_name();
+    const auto lz4_filename = tar_filename + ".lz4";
+    const auto test_file = util::create_test_file(tar_type);
+    util::remove_if_exists(tar_filename);
+    util::remove_if_exists(lz4_filename);
+
+    const tarxx::Platform platform;
+    tarxx::tarfile f(lz4_filename, tarxx::tarfile::compression_mode::lz4, tar_type);
+
+    std::time_t time = std::time(nullptr);
+    const auto user = platform.user_id();
+    const auto group = platform.group_id();
+    f.add_directory("test_dir", 0755, user, group, time);
+    f.close();
+    util::decompress_lz4(lz4_filename, tar_filename);
+
+    const auto files = util::files_in_tar_archive(tar_filename);
+    EXPECT_EQ(files.size(), 1);
+    const auto& file = files.at(0);
+    EXPECT_EQ(file.owner, platform.user_name(user));
+    EXPECT_EQ(file.group, platform.group_name(group));
+    EXPECT_EQ(file.size, 0);
+    EXPECT_EQ(file.permissions, "drwxr-xr-x");
+}
+
+#if defined(__linux)
+TEST(lz4_tests, add_char_special_device_on_the_fly)
+{
+    const auto tar_type = tarxx::tarfile::tar_type::ustar;
+    const auto tar_filename = util::tar_file_name();
+    const auto lz4_filename = tar_filename + ".lz4";
+    tarxx::tarfile f(lz4_filename, tarxx::tarfile::compression_mode::lz4, tar_type);
+    util::file_info test_file {
+            .path = "/dev/random"};
+    util::file_info_set_stat(test_file, tar_type);
+    std::vector<util::file_info> expected_files = {
+            test_file};
+
+    tarxx::Platform platform;
+    const auto owner = platform.file_owner(test_file.path);
+    const auto group = platform.file_group(test_file.path);
+    tarxx::major_t major;
+    tarxx::minor_t minor;
+    platform.major_minor(test_file.path, major, minor);
+    f.add_character_special_file(test_file.path, test_file.mode, owner, group, test_file.size, test_file.mtime.tv_sec,  major, minor);
+    f.close();
+    util::decompress_lz4(lz4_filename, tar_filename);
+
+    util::expect_files_in_tar(tar_filename, expected_files, tar_type);
+}
+
+TEST(lz4_tests, add_fifo_on_the_fly)
+{
+    const auto tar_type = tarxx::tarfile::tar_type::ustar;
+    const auto tar_filename = util::tar_file_name();
+    const auto lz4_filename = tar_filename + ".lz4";
+    util::remove_if_exists(tar_filename);
+    util::remove_if_exists(lz4_filename);
+
+    tarxx::tarfile f(lz4_filename, tarxx::tarfile::compression_mode::lz4, tar_type);
+
+    util::file_info test_file {.path = std::filesystem::temp_directory_path() / "fifo"};
+    util::remove_if_exists(test_file.path);
+    mkfifo(test_file.path.c_str(), 0666);
+    util::file_info_set_stat(test_file, tar_type);
+
+    tarxx::Platform platform;
+    const auto owner = platform.file_owner(test_file.path);
+    const auto group = platform.file_group(test_file.path);
+
+    f.add_fifo(test_file.path, test_file.mode, owner, group, test_file.mtime.tv_sec);
+    f.close();
+    util::decompress_lz4(lz4_filename, tar_filename);
+
+    std::vector<util::file_info> expected_files = {test_file};
+    util::expect_files_in_tar(tar_filename, expected_files, tar_type);
+}
+#endif
+
 INSTANTIATE_TEST_SUITE_P(tar_type_dependent, lz4_tests, ::testing::Values(tarxx::tarfile::tar_type::unix_v7, tarxx::tarfile::tar_type::ustar));
