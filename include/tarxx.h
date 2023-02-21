@@ -471,6 +471,16 @@ namespace tarxx {
             write_header(name, mode, uid, gid, size, time, file_type_flag::CHARACTER_SPECIAL_FILE, dev_major, dev_minor);
         }
 
+        void add_block_special_file(const std::string& name, mode_t mode, uid_t uid, gid_t gid, size_t size, mod_time_t time, major_t dev_major, minor_t dev_minor)
+        {
+            write_header(name, mode, uid, gid, size, time, file_type_flag::BLOCK_SPECIAL_FILE, dev_major, dev_minor);
+        }
+
+        void add_fifo(const std::string& name, mode_t mode, uid_t uid, gid_t gid, size_t size, mod_time_t time)
+        {
+            write_header(name, mode, uid, gid, size, time, file_type_flag::FIFO);
+        }
+
         void add_directory(const std::string& dirname, mode_t mode, uid_t uid, gid_t gid, mod_time_t mod_time)
         {
             check_state();
