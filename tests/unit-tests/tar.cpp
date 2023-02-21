@@ -496,6 +496,47 @@ TEST(tar_tests, add_char_special_device_on_the_fly)
 
     util::expect_files_in_tar(tar_filename, expected_files, tar_type);
 }
+
+TEST(tar_tests, add_fifo_from_filesystem)
+{
+    const auto tar_type = tarxx::tarfile::tar_type::ustar;
+    const auto tar_filename = util::tar_file_name();
+
+    util::file_info test_file {.path = std::filesystem::temp_directory_path() / "fifo"};
+    util::remove_if_exists(test_file.path);
+    mkfifo(test_file.path.c_str(), 0666);
+    util::file_info_set_stat(test_file, tar_type);
+
+    tarxx::tarfile f(tar_filename, tar_type);
+    f.add_from_filesystem(test_file.path);
+    f.close();
+
+    std::vector<util::file_info> expected_files = {test_file};
+    util::expect_files_in_tar(tar_filename, expected_files, tar_type);
+}
+
+TEST(tar_tests, add_fifo_on_the_fly)
+{
+    const auto tar_type = tarxx::tarfile::tar_type::ustar;
+    const auto tar_filename = util::tar_file_name();
+
+    util::file_info test_file {.path = std::filesystem::temp_directory_path() / "fifo"};
+    util::remove_if_exists(test_file.path);
+    mkfifo(test_file.path.c_str(), 0666);
+    util::file_info_set_stat(test_file, tar_type);
+
+    tarxx::Platform platform;
+    const auto owner = platform.file_owner(test_file.path);
+    const auto group = platform.file_group(test_file.path);
+
+    tarxx::tarfile f(tar_filename, tar_type);
+    f.add_fifo(test_file.path, test_file.mode, owner, group, test_file.size, test_file.mtime.tv_sec);
+    f.close();
+
+    std::vector<util::file_info> expected_files = {test_file};
+    util::expect_files_in_tar(tar_filename, expected_files, tar_type);
+}
+
 #endif
 
 INSTANTIATE_TEST_SUITE_P(tar_type_dependent, tar_tests, ::testing::Values(tarxx::tarfile::tar_type::unix_v7, tarxx::tarfile::tar_type::ustar));
