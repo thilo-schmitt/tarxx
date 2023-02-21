@@ -88,7 +88,7 @@ namespace tarxx {
     using uid_t = uint32_t;
     using gid_t = uint32_t;
     using mod_time_t = int64_t;
-    using tar_size_t = uint64_t;
+    using size_t = uint64_t;
     using major_t = uint32_t;
     using minor_t = uint32_t;
 
@@ -114,7 +114,7 @@ namespace tarxx {
     struct Filesystem {
         virtual void iterateDirectory(const std::string& path, std::function<void(const std::string&)>&& cb) const = 0;
         [[nodiscard]] virtual file_type_flag type_flag(const std::string& path) const = 0;
-        [[nodiscard]] virtual tar_size_t file_size(const std::string& path) const = 0;
+        [[nodiscard]] virtual size_t file_size(const std::string& path) const = 0;
         [[nodiscard]] virtual mod_time_t mod_time(const std::string& path) const = 0;
         [[nodiscard]] virtual mode_t permissions(const std::string& path) const = 0;
         [[nodiscard]] virtual std::string read_symlink(const std::string& path) const = 0;
@@ -311,12 +311,14 @@ namespace tarxx {
             minor = minor(file_stat.st_rdev);
         }
 
-        [[nodiscard]] uid_t file_owner(const std::string& path) const override{
+        [[nodiscard]] uid_t file_owner(const std::string& path) const override
+        {
             const auto file_stat = get_stat(path);
             return file_stat.st_uid;
         };
 
-        [[nodiscard]] virtual gid_t file_group(const std::string& path) const override{
+        [[nodiscard]] gid_t file_group(const std::string& path) const override
+        {
             const auto file_stat = get_stat(path);
             return file_stat.st_gid;
         };
@@ -464,6 +466,11 @@ namespace tarxx {
             write_header(link_name, static_cast<mode_t>(tarxx::permission_t::all_all), uid, gid, 0U, time, file_type_flag::SYMBOLIC_LINK, 0U, 0U, file_name);
         }
 
+        void add_character_special_file(const std::string& name, mode_t mode, uid_t uid, gid_t gid, size_t size, mod_time_t time, major_t dev_major, minor_t dev_minor)
+        {
+            write_header(name, mode, uid, gid, size, time, file_type_flag::CHARACTER_SPECIAL_FILE, dev_major, dev_minor);
+        }
+
         void add_directory(const std::string& dirname, mode_t mode, uid_t uid, gid_t gid, mod_time_t mod_time)
         {
             check_state();
@@ -533,7 +540,7 @@ namespace tarxx {
             stream_block_used_ += size;
         }
 
-        void stream_file_complete(const std::string& filename, mode_t mode, uid_t uid, gid_t gid, tar_size_t size, mod_time_t mod_time)
+        void stream_file_complete(const std::string& filename, mode_t mode, uid_t uid, gid_t gid, size_t size, mod_time_t mod_time)
         {
             if (stream_file_header_pos_ < 0) throw std::logic_error("Can't finish stream file, none is in progress");
 
@@ -699,7 +706,7 @@ namespace tarxx {
 
             std::function<void()> write_data;
 
-            tar_size_t size = 0;
+            size_t size = 0;
             major_t dev_major = 0;
             minor_t dev_minor = 0;
             std::string link_name;
@@ -726,6 +733,7 @@ namespace tarxx {
                     [[fallthrough]];
                 case file_type_flag::BLOCK_SPECIAL_FILE:
                     platform_.major_minor(path, dev_major, dev_minor);
+                    size = 0;
                     break;
                 case file_type_flag::SYMBOLIC_LINK:
                     mode = static_cast<mode_t>(permission_t::all_all);
@@ -758,9 +766,8 @@ namespace tarxx {
             }
         }
 
-        void write_header(const std::string& name, mode_t mode, uid_t uid, gid_t gid, tar_size_t size, mod_time_t time, const file_type_flag& file_type, major_t dev_major = 0, minor_t dev_minor = 0, const std::string& link_name = "")
+        void write_header(const std::string& name, mode_t mode, uid_t uid, gid_t gid, size_t size, mod_time_t time, const file_type_flag& file_type, major_t dev_major = 0, minor_t dev_minor = 0, const std::string& link_name = "")
         {
-#if defined(__linux)
             if (type_ != tar_type::unix_v7 && type_ != tar_type::ustar) throw std::logic_error("unsupported tar format");
             if (type_ == tar_type::unix_v7 && (static_cast<int>(file_type) > static_cast<int>(file_type_flag::SYMBOLIC_LINK))) throw std::logic_error("unsupported file type for tarv7 format");
 
@@ -786,9 +793,6 @@ namespace tarxx {
                 write_into_block(header, to_octal_ascii(dev_major, USTAR_HEADER_LEN_DEVMAJOR), USTAR_HEADER_POS_DEVMAJOR, USTAR_HEADER_LEN_DEVMAJOR);
                 write_into_block(header, to_octal_ascii(dev_minor, USTAR_HEADER_LEN_DEVMAJOR), USTAR_HEADER_POS_DEVMINOR, USTAR_HEADER_LEN_DEVMINOR);
             }
-#else
-#    error "no support for targeted platform"
-#endif
 
             calc_and_write_checksum(header);
 
