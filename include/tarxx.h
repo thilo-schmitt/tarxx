@@ -476,9 +476,9 @@ namespace tarxx {
             write_header(name, mode, uid, gid, size, time, file_type_flag::BLOCK_SPECIAL_FILE, dev_major, dev_minor);
         }
 
-        void add_fifo(const std::string& name, mode_t mode, uid_t uid, gid_t gid, size_t size, mod_time_t time)
+        void add_fifo(const std::string &name, mode_t mode, uid_t uid, gid_t gid, mod_time_t time)
         {
-            write_header(name, mode, uid, gid, size, time, file_type_flag::FIFO);
+            write_header(name, mode, uid, gid, 0, time, file_type_flag::FIFO);
         }
 
         void add_directory(const std::string& dirname, mode_t mode, uid_t uid, gid_t gid, mod_time_t mod_time)
@@ -515,6 +515,7 @@ namespace tarxx {
         void add_file_streaming_data(const char* const data, std::streamsize size)
         {
             if (!is_open()) throw std::logic_error("Cannot append file, tar archive is not open");
+            if (stream_file_header_pos_ < 0) throw std::logic_error("Can't stream file data, no file added via add_file_streaming");
 
             unsigned long pos = 0;
             block_t block;
@@ -570,8 +571,8 @@ namespace tarxx {
             // seek to header
             const auto stream_pos = file_.tellp();
             file_.seekp(stream_file_header_pos_);
-            write_header(filename, mode, uid, gid, size, mod_time, file_type_flag::REGULAR_FILE);
             stream_file_header_pos_ = -1;
+            write_header(filename, mode, uid, gid, size, mod_time, file_type_flag::REGULAR_FILE);
             file_.seekp(stream_pos);
         }
 
@@ -780,6 +781,7 @@ namespace tarxx {
         {
             if (type_ != tar_type::unix_v7 && type_ != tar_type::ustar) throw std::logic_error("unsupported tar format");
             if (type_ == tar_type::unix_v7 && (static_cast<int>(file_type) > static_cast<int>(file_type_flag::SYMBOLIC_LINK))) throw std::logic_error("unsupported file type for tarv7 format");
+            if (stream_file_header_pos_ > -1) throw std::logic_error("Can't write a header while file streaming is in progress");
 
             block_t header {};
             write_into_block(header, mode, UNIX_V7_USTAR_HEADER_POS_MODE, UNIX_V7_USTAR_HEADER_LEN_MODE);
