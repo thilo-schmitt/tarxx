@@ -26,6 +26,7 @@
 
 #ifndef TARXX_SYSTEM_TAR_H
 #define TARXX_SYSTEM_TAR_H
+
 #include "tarxx.h"
 #include <array>
 #include <chrono>
@@ -126,6 +127,11 @@ namespace util {
         throw std::runtime_error("unsupported tar version: " + tar_output);
     }
 
+    inline std::string remove_leading_slash(const std::string& s)
+    {
+        return (s.find('/') == 0) ? s.substr(1, s.size() - 1) : s;
+    }
+
     inline std::vector<file_info> files_in_tar_archive(const std::string& filename)
     {
         std::string tar_output;
@@ -166,6 +172,9 @@ namespace util {
                     time = tokens.at(5);
                     device_type = tokens.at(2) + "," + tokens.at(3);
                     size = 0;
+                } else if (file_type == 'h') {
+                    link_name = tokens.at(5);
+                    name = tokens.at(8);
                 } else {
                     name = tokens.at(5);
                 }
@@ -354,7 +363,8 @@ namespace util {
 
     inline void file_from_tar_matches_original_file(const util::file_info& test_file, const util::file_info& file_in_tar, const tarxx::tarfile::tar_type& tar_type)
     {
-        EXPECT_EQ(test_file.path, file_in_tar.path);
+        const auto path = remove_leading_slash(test_file.path);
+        EXPECT_EQ(path, file_in_tar.path);
         EXPECT_EQ(test_file.size, file_in_tar.size);
         EXPECT_EQ(test_file.date, file_in_tar.date);
         EXPECT_EQ(test_file.permissions, file_in_tar.permissions);
@@ -385,8 +395,10 @@ namespace util {
 
             auto expected_file_found = false;
             for (const auto& expected_file : expected_files) {
-                if (found_file.path != expected_file.path) continue;
-                if (found_file.link_name != expected_file.link_name) continue;
+                const auto expected_path = remove_leading_slash(expected_file.path);
+                const auto expected_link_name = remove_leading_slash(expected_file.link_name);
+                if (found_file.path != expected_path) continue;
+                if (found_file.link_name != expected_link_name) continue;
 
                 expected_file_found = true;
                 util::file_from_tar_matches_original_file(expected_file, found_file, tar_type);
@@ -420,6 +432,7 @@ namespace util {
     }
 
 #ifdef WITH_LZ4
+
     inline void decompress_lz4(const std::string& lz4_in, const std::string& tar_out)
     {
         std::string lz4_output;
@@ -429,6 +442,7 @@ namespace util {
             throw std::runtime_error("Failed to decompress lz4 file: " + lz4_in + ", error=" + lz4_output);
         }
     }
+
 #endif
 
 

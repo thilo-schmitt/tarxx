@@ -106,7 +106,7 @@ TEST_P(lz4_tests, add_file_stream_data_multi_block)
     lz4_validate_streaming_data(tarxx::BLOCK_SIZE * 1.52, tar_type);
 }
 
-TEST(lz4_tests, add_directory_on_the_fly)
+TEST(lz4_tests, add_directory_via_streaming)
 {
     const auto tar_type = tarxx::tarfile::tar_type::ustar;
     const auto tar_filename = util::tar_file_name();
@@ -135,7 +135,7 @@ TEST(lz4_tests, add_directory_on_the_fly)
 }
 
 #if defined(__linux)
-TEST(lz4_tests, add_char_special_device_on_the_fly)
+TEST(lz4_tests, add_char_special_device_via_streaming)
 {
     const auto tar_type = tarxx::tarfile::tar_type::ustar;
     const auto tar_filename = util::tar_file_name();
@@ -160,7 +160,7 @@ TEST(lz4_tests, add_char_special_device_on_the_fly)
     util::expect_files_in_tar(tar_filename, expected_files, tar_type);
 }
 
-TEST(lz4_tests, add_fifo_on_the_fly)
+TEST(lz4_tests, add_fifo_via_streaming)
 {
     const auto tar_type = tarxx::tarfile::tar_type::ustar;
     const auto tar_filename = util::tar_file_name();

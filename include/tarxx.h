@@ -45,6 +45,7 @@
 #include <stdexcept>
 #include <string>
 #include <system_error>
+#include <unordered_set>
 #include <vector>
 
 #if defined(__linux)
@@ -73,6 +74,7 @@ namespace tarxx {
         BLOCK_SPECIAL_FILE = '4',
         DIRECTORY = '5',
         FIFO = '6',
+        // contiguous files are not supported by the current implementation
         CONTIGUOUS_FILE = '7',
     };
 
@@ -119,6 +121,7 @@ namespace tarxx {
         [[nodiscard]] virtual mode_t permissions(const std::string& path) const = 0;
         [[nodiscard]] virtual std::string read_symlink(const std::string& path) const = 0;
         [[nodiscard]] virtual bool file_exists(const std::string& path) const = 0;
+        [[nodiscard]] virtual std::pair<bool, std::string> file_equivalent_present(const std::string& path, const std::unordered_set<std::string>& stored_files) const = 0;
 
         static char file_type_to_char(const tarxx::file_type_flag& type)
         {
@@ -273,6 +276,16 @@ namespace tarxx {
         {
             return std::filesystem::exists(path);
         };
+
+        [[nodiscard]] std::pair<bool, std::string> file_equivalent_present(const std::string& path, const std::unordered_set<std::string>& stored_files) const override
+        {
+            for (const auto& f : stored_files) {
+                if (std::filesystem::equivalent(f, path)) {
+                    return {true, f};
+                }
+            }
+            return {false, ""};
+        }
     };
 
 #if defined(__linux)
@@ -281,14 +294,14 @@ namespace tarxx {
         {
             const auto* const pwd = getpwuid(uid);
             // keep fields empty if we failed to get the name
-            if (pwd == nullptr) return "";
+            if (pwd == nullptr) return std::to_string(uid);
             return pwd->pw_name;
         }
 
         [[nodiscard]] std::string group_name(gid_t gid) const override
         {
             const auto* const group = getgrgid(gid);
-            if (group == nullptr) return "";
+            if (group == nullptr) return std::to_string(gid);
             return group->gr_name;
         }
 
@@ -432,6 +445,7 @@ namespace tarxx {
         void close()
         {
             try {
+                stored_files_.clear();
                 if (is_open()) {
                     finish();
                     file_.close();
@@ -455,10 +469,16 @@ namespace tarxx {
             read_from_filesystem_write_to_tar(filename);
         }
 
-        void add_link(const std::string& file_name, const std::string& link_name, uid_t uid, gid_t gid, mod_time_t time)
+        void add_symlink(const std::string& file_name, const std::string& link_name, uid_t uid, gid_t gid, mod_time_t time)
         {
             check_state_and_flush();
             write_header(link_name, static_cast<mode_t>(tarxx::permission_t::all_all), uid, gid, 0U, time, file_type_flag::SYMBOLIC_LINK, 0U, 0U, file_name);
+        }
+
+        void add_hardlink(const std::string& file_name, const std::string& link_name, uid_t uid, gid_t gid, mod_time_t time)
+        {
+            check_state_and_flush();
+            write_header(link_name, static_cast<mode_t>(tarxx::permission_t::all_all), uid, gid, 0U, time, file_type_flag::HARD_LINK, 0U, 0U, file_name);
         }
 
         void add_character_special_file(const std::string& name, mode_t mode, uid_t uid, gid_t gid, size_t size, mod_time_t time, major_t dev_major, minor_t dev_minor)
@@ -710,11 +730,19 @@ namespace tarxx {
             const auto file_gid = platform_.file_group(path);
 
             // Store the device major number (for block or character devices).
-            const auto file_type = platform_.type_flag(path);
+            auto file_type = platform_.type_flag(path);
             // ignore unsupported file types.
             // i.e. directories for tar v7
             if (!is_file_type_supported(file_type)) {
                 return;
+            }
+
+            if (file_type != file_type_flag::SYMBOLIC_LINK) {
+                const auto equivalent = platform_.file_equivalent_present(path, stored_files_);
+                if (equivalent.first) {
+                    link_name = equivalent.second;
+                    file_type = file_type_flag::HARD_LINK;
+                }
             }
 
             switch (file_type) {
@@ -728,7 +756,6 @@ namespace tarxx {
                     [[fallthrough]];
                 case file_type_flag::BLOCK_SPECIAL_FILE:
                     platform_.major_minor(path, dev_major, dev_minor);
-                    size = 0;
                     break;
                 case file_type_flag::SYMBOLIC_LINK:
                     mode = static_cast<mode_t>(permission_t::all_all);
@@ -766,6 +793,15 @@ namespace tarxx {
             if (type_ != tar_type::unix_v7 && type_ != tar_type::ustar) throw std::logic_error("unsupported tar format");
             if (type_ == tar_type::unix_v7 && (static_cast<int>(file_type) > static_cast<int>(file_type_flag::SYMBOLIC_LINK))) throw std::logic_error("unsupported file type for tarv7 format");
             if (stream_file_header_pos_ > -1) throw std::logic_error("Can't write a header while file streaming is in progress");
+            if (stored_files_.find(name) != stored_files_.end() && file_type != file_type_flag::HARD_LINK) throw std::logic_error("Can't add a file with the same name twice, unless it's a hard link");
+            stored_files_.insert(name);
+
+            const auto remove_leading_slash = [](const std::string& s) {
+                return (s.find('/') == 0) ? s.substr(1, s.size() - 1) : s;
+            };
+
+            const auto store_name = remove_leading_slash(name);
+            const auto store_link = remove_leading_slash(link_name);
 
             block_t header {};
             write_into_block(header, mode, UNIX_V7_USTAR_HEADER_POS_MODE, UNIX_V7_USTAR_HEADER_LEN_MODE);
@@ -774,10 +810,10 @@ namespace tarxx {
             write_into_block(header, size, UNIX_V7_USTAR_HEADER_POS_SIZE, UNIX_V7_USTAR_HEADER_LEN_SIZE);
             write_into_block(header, time, UNIX_V7_USTAR_HEADER_POS_MTIM, UNIX_V7_USTAR_HEADER_LEN_MTIM);
             write_into_block(header, static_cast<char>(file_type), UNIX_V7_USTAR_HEADER_POS_TYPEFLAG, UNIX_V7_USTAR_HEADER_LEN_TYPEFLAG);
-            write_name_and_prefix(header, name);
+            write_name_and_prefix(header, store_name);
 
             if (!link_name.empty()) {
-                write_into_block(header, link_name, UNIX_V7_USTAR_HEADER_POS_LINKNAME, UNIX_V7_USTAR_HEADER_LEN_LINKNAME);
+                write_into_block(header, store_link, UNIX_V7_USTAR_HEADER_POS_LINKNAME, UNIX_V7_USTAR_HEADER_LEN_LINKNAME);
             }
 
             if (type_ == tar_type::ustar) {
@@ -916,6 +952,7 @@ namespace tarxx {
         size_t stream_block_used_;
 
         Platform platform_;
+        std::unordered_set<std::string> stored_files_;
 
 #ifdef WITH_COMPRESSION
         compression_mode compression_ = compression_mode::none;
