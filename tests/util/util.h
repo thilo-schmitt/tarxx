@@ -127,12 +127,6 @@ namespace util {
         throw std::runtime_error("unsupported tar version: " + tar_output);
     }
 
-    inline std::string remove_leading_slash(const std::string& s)
-    {
-        // todo remove ../ as well
-        return (s.find('/') == 0) ? s.substr(1, s.size() - 1) : s;
-    }
-
     inline std::vector<file_info> files_in_tar_archive(const std::string& filename)
     {
         std::string tar_output;
@@ -142,7 +136,7 @@ namespace util {
         }
 
         const auto tar_output_lines = split_string(tar_output, 0xa);
-        const std::regex expr("(\\w|-|/|:)+");
+        const std::regex expr("(\\w|-|\\./|/|:)+");
         std::vector<file_info> infos;
         const auto shell_tar = tar_version();
         for (const auto& line : tar_output_lines) {
@@ -283,7 +277,7 @@ namespace util {
             ss << major << "," << minor;
             file.device_type = ss.str();
         } else if (std::filesystem::is_directory(file.path)) {
-            if (file.path.at(file.path.size()-1) != '/') {
+            if (file.path.at(file.path.size() - 1) != '/') {
                 file.path += '/';
             }
         }
@@ -326,9 +320,8 @@ namespace util {
     inline std::tuple<std::filesystem::path, std::vector<util::file_info>> create_multiple_test_files_with_sub_folders(const tarxx::tarfile::tar_type& tar_type)
     {
         std::filesystem::path dir(std::filesystem::temp_directory_path() / "test");
-        if (!std::filesystem::exists(dir)) {
-            std::filesystem::create_directories(dir);
-        }
+        remove_if_exists(dir);
+        std::filesystem::create_directories(dir);
 
         std::vector<std::string> test_files = {
                 dir / "test_file_1",
@@ -368,7 +361,8 @@ namespace util {
 
     inline void file_from_tar_matches_original_file(const util::file_info& test_file, const util::file_info& file_in_tar, const tarxx::tarfile::tar_type& tar_type)
     {
-        const auto path = remove_leading_slash(test_file.path);
+        const tarxx::Platform platform;
+        const auto path = platform.relative_path(test_file.path);
         EXPECT_EQ(path, file_in_tar.path);
         EXPECT_EQ(test_file.size, file_in_tar.size);
         EXPECT_EQ(test_file.date, file_in_tar.date);
@@ -394,21 +388,24 @@ namespace util {
 
     inline void expect_files_in_tar(const std::string& tar_filename, const std::vector<util::file_info>& expected_files, const tarxx::tarfile::tar_type& tar_type)
     {
+        const tarxx::Platform platform;
         const auto files_in_tar = util::files_in_tar_archive(tar_filename);
         EXPECT_EQ(files_in_tar.size(), expected_files.size());
         for (const auto& found_file : files_in_tar) {
 
             auto expected_file_found = false;
             for (const auto& expected_file : expected_files) {
-                const auto expected_path = remove_leading_slash(expected_file.path);
-                const auto expected_link_name = remove_leading_slash(expected_file.link_name);
+                const auto expected_path = platform.relative_path(expected_file.path);
+                const auto expected_link_name = platform.relative_path(expected_file.link_name);
                 if (found_file.path != expected_path) continue;
                 if (found_file.link_name != expected_link_name) continue;
 
                 expected_file_found = true;
                 util::file_from_tar_matches_original_file(expected_file, found_file, tar_type);
             }
-
+            if (!expected_file_found) {
+                std::cerr << "Missing " << found_file.path << " in tar archive\n";
+            }
             EXPECT_TRUE(expected_file_found);
         }
     }
