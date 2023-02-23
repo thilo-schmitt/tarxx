@@ -502,8 +502,7 @@ namespace tarxx {
 
         void add_directory(const std::string &dirname, mode_t mode, uid_t uid, gid_t gid, mod_time_t mod_time) {
             check_state_and_flush();
-            const auto flag = type_ == tar_type::unix_v7 ? file_type_flag::REGULAR_FILE : file_type_flag::DIRECTORY;
-            write_header(dirname, mode, uid, gid, 0, mod_time, flag);
+            write_header(dirname, mode, uid, gid, 0, mod_time, file_type_flag::DIRECTORY);
         }
 
         void add_file_streaming() {

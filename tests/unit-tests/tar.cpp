@@ -29,6 +29,12 @@
 #include <tarxx.h>
 #include <util/util.h>
 
+#ifdef __linux
+#include <sys/socket.h>
+#include <sys/un.h>
+
+#endif
+
 using std::string_literals::operator""s;
 
 class tar_tests : public ::testing::TestWithParam<tarxx::tarfile::tar_type> {};
@@ -484,7 +490,6 @@ TEST_P(tar_tests, add_hard_link_from_filesystem)
     util::expect_files_in_tar(tar_filename, expected_files, tar_type);
 }
 
-// todo test what happens if we tar a socket
 // todo test relative paths
 
 TEST_P(tar_tests, add_directory_from_filesystem)
@@ -502,6 +507,36 @@ TEST_P(tar_tests, add_directory_from_filesystem)
     EXPECT_EQ(files.size(), 1);
     util::file_from_tar_matches_original_file(test_dir, files.at(0), tar_type);
 }
+
+TEST_P(tar_tests, add_directory_via_streaming)
+{
+    const auto tar_type = GetParam();
+    const auto tar_filename = util::tar_file_name();
+    const tarxx::Platform platform;
+
+    tarxx::tarfile f(tar_filename, tar_type);
+
+    std::time_t time = std::time(nullptr);
+    const auto user = platform.user_id();
+    const auto group = platform.group_id();
+    f.add_directory("test_dir", 0755, user, group, time);
+    f.close();
+
+    const auto files = util::files_in_tar_archive(tar_filename);
+    EXPECT_EQ(files.size(), 1);
+    const auto& file = files.at(0);
+    if (tar_type == tarxx::tarfile::tar_type::ustar) {
+        EXPECT_EQ(file.owner, platform.user_name(user));
+        EXPECT_EQ(file.group, platform.group_name(group));
+    } else {
+        EXPECT_EQ(file.owner, std::to_string(user));
+        EXPECT_EQ(file.group, std::to_string(group));
+    }
+
+    EXPECT_EQ(file.size, 0);
+    EXPECT_EQ(file.permissions, "drwxr-xr-x");
+}
+
 
 // Below follow tests only valid for ustar
 TEST(tar_tests, add_directory_twice_via_filesystem)
@@ -613,30 +648,6 @@ TEST(tar_tests, add_from_filesystem_ustar_prefix_used)
     util::expect_files_in_tar(tar_filename, test_files, tar_type);
 }
 
-// todo also test this for v7
-TEST(tar_tests, add_directory_via_streaming)
-{
-    const auto tar_type = tarxx::tarfile::tar_type::ustar;
-    const auto tar_filename = util::tar_file_name();
-    const tarxx::Platform platform;
-
-    tarxx::tarfile f(tar_filename, tar_type);
-
-    std::time_t time = std::time(nullptr);
-    const auto user = platform.user_id();
-    const auto group = platform.group_id();
-    f.add_directory("test_dir", 0755, user, group, time);
-    f.close();
-
-    const auto files = util::files_in_tar_archive(tar_filename);
-    EXPECT_EQ(files.size(), 1);
-    const auto& file = files.at(0);
-    EXPECT_EQ(file.owner, platform.user_name(user));
-    EXPECT_EQ(file.group, platform.group_name(group));
-    EXPECT_EQ(file.size, 0);
-    EXPECT_EQ(file.permissions, "drwxr-xr-x");
-}
-
 #if defined(__linux)
 TEST(tar_tests, add_char_special_device_from_filesystem)
 {
@@ -716,6 +727,30 @@ TEST(tar_tests, add_fifo_via_streaming)
 
     std::vector<util::file_info> expected_files = {test_file};
     util::expect_files_in_tar(tar_filename, expected_files, tar_type);
+}
+
+TEST_P(tar_tests, add_socket)
+{
+    const auto sockfd = socket(AF_UNIX, SOCK_STREAM, 0);
+    EXPECT_NE(sockfd, -1);
+
+    struct sockaddr_un addr{};
+    std::memset(&addr, 0, sizeof(struct sockaddr_un));
+    addr.sun_family = AF_UNIX;
+    const auto sock_path = "/tmp/test.sock";
+    std::strncpy(addr.sun_path, sock_path, sizeof(addr.sun_path) - 1);
+    EXPECT_NE(bind(sockfd, (struct sockaddr *)&addr, sizeof(struct sockaddr_un)), -1);
+
+    const auto tar_type = tarxx::tarfile::tar_type::ustar;
+    const auto tar_filename = util::tar_file_name();
+
+
+    tarxx::tarfile f(tar_filename, tar_type);
+
+    EXPECT_THROW(f.add_from_filesystem(sock_path), std::invalid_argument);
+
+    close(sockfd);
+    util::remove_if_exists(sock_path);
 }
 
 #endif
