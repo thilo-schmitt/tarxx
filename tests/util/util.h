@@ -129,6 +129,7 @@ namespace util {
 
     inline std::string remove_leading_slash(const std::string& s)
     {
+        // todo remove ../ as well
         return (s.find('/') == 0) ? s.substr(1, s.size() - 1) : s;
     }
 
@@ -265,7 +266,7 @@ namespace util {
 
         // set defaults, might be overwritten by special file types
         file.permissions = platform.permissions_str(file.path);
-        file.mode = platform.permissions(file.path);
+        file.mode = platform.mode(file.path);
 
         if (std::filesystem::is_symlink(file.path)) {
             file.link_name = file.path;
@@ -281,6 +282,10 @@ namespace util {
             std::stringstream ss;
             ss << major << "," << minor;
             file.device_type = ss.str();
+        } else if (std::filesystem::is_directory(file.path)) {
+            if (file.path.at(file.path.size()-1) != '/') {
+                file.path += '/';
+            }
         }
     }
 
