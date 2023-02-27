@@ -586,16 +586,6 @@ TEST_P(tar_tests, add_from_recursive_tar_will_be_part_of_itself)
     EXPECT_THROW(f.add_from_filesystem(tar_filename), std::invalid_argument);
 }
 
-TEST_P(tar_tests, add_recursive_non_dir)
-{
-    const auto tar_type = GetParam();
-    auto [dir, test_files] = util::create_multiple_test_files_with_sub_folders(tar_type);
-
-    tarxx::tarfile f(dir / "test.tar", tar_type);
-    EXPECT_THROW(f.add_from_filesystem_recursive(test_files.at(0).path), std::invalid_argument);
-}
-
-
 TEST_P(tar_tests, add_directory_from_filesystem)
 {
     const auto tar_type = GetParam();
@@ -753,6 +743,9 @@ TEST(tar_tests, add_from_filesystem_ustar_prefix_used)
 #if defined(__linux)
 TEST(tar_tests, add_char_special_device_from_filesystem)
 {
+    if (util::tar_version() != util::tar_version::gnu) {
+        return;
+    }
     const auto tar_type = tarxx::tarfile::tar_type::ustar;
     const auto tar_filename = util::tar_file_name();
     tarxx::tarfile f(tar_filename, tar_type);
@@ -770,6 +763,9 @@ TEST(tar_tests, add_char_special_device_from_filesystem)
 
 TEST(tar_tests, add_char_special_device_via_streaming)
 {
+    if (util::tar_version() != util::tar_version::gnu) {
+        return;
+    }
     const auto tar_type = tarxx::tarfile::tar_type::ustar;
     const auto tar_filename = util::tar_file_name();
     tarxx::tarfile f(tar_filename, tar_type);
@@ -793,6 +789,9 @@ TEST(tar_tests, add_char_special_device_via_streaming)
 
 TEST(tar_tests, add_fifo_from_filesystem)
 {
+    if (util::tar_version() != util::tar_version::gnu) {
+        return;
+    }
     const auto tar_type = tarxx::tarfile::tar_type::ustar;
     const auto tar_filename = util::tar_file_name();
 
@@ -811,6 +810,9 @@ TEST(tar_tests, add_fifo_from_filesystem)
 
 TEST(tar_tests, add_fifo_via_streaming)
 {
+    if (util::tar_version() != util::tar_version::gnu) {
+        return;
+    }
     const auto tar_type = tarxx::tarfile::tar_type::ustar;
     const auto tar_filename = util::tar_file_name();
 

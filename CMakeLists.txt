@@ -37,10 +37,10 @@ if (WITH_LZ4)
     if (NOT WITH_COMPRESSION)
         message(FATAL_ERROR "LZ4 option needs compression to be turned on with '-DCOMPRESSION=ON'")
     endif()
-    find_library(NAME liblz4.a)
+    find_library(LZ4 liblz4.a REQUIRED)
 
     list(APPEND ${LIB_NAME}_COMPILE_DEFINITIONS WITH_LZ4=ON)
-    list(APPEND ${LIB_NAME}_LINK_LIBRARIES lz4.a)
+    list(APPEND ${LIB_NAME}_LINK_LIBRARIES ${LZ4})
     list(APPEND ${LIB_NAME}_INCLUDE_DIRECTORIES ${LZ4_INCLUDE_DIRS})
 endif()
 

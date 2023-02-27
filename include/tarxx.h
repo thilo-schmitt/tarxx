@@ -490,10 +490,13 @@ namespace tarxx {
 
         void add_from_filesystem_recursive(const std::string& path)
         {
-            if (platform_.type_flag(path) != file_type_flag::DIRECTORY) throw std::invalid_argument("path must be a directory");
-            platform_.iterateDirectory(path, [&](const std::string& callback_path) {
-                add_from_filesystem(callback_path);
-            });
+            if (platform_.type_flag(path) != file_type_flag::DIRECTORY) {
+                add_from_filesystem(path);
+            } else {
+                platform_.iterateDirectory(path, [&](const std::string& callback_path) {
+                    add_from_filesystem(callback_path);
+                });
+            }
         }
 
         void add_from_filesystem(const std::string& filename)
