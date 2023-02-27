@@ -127,6 +127,14 @@ namespace util {
         throw std::runtime_error("unsupported tar version: " + tar_output);
     }
 
+    inline int current_year()
+    {
+        const auto now = std::chrono::system_clock::now();
+        std::time_t now_time_t = std::chrono::system_clock::to_time_t(now);
+        std::tm* now_tm = std::localtime(&now_time_t);
+        return now_tm->tm_year + 1900;
+    }
+
     inline std::vector<file_info> files_in_tar_archive(const std::string& filename)
     {
         std::string tar_output;
@@ -188,12 +196,7 @@ namespace util {
                         .device_type = device_type});
             } else if (shell_tar == tar_version::bsd) {
                 // just assume that the files where from this year
-                const auto year = []() {
-                    const auto now = std::chrono::system_clock::now();
-                    std::time_t now_time_t = std::chrono::system_clock::to_time_t(now);
-                    std::tm* now_tm = std::localtime(&now_time_t);
-                    return now_tm->tm_year + 1900;
-                }();
+                const auto year = current_year();
 
                 const auto month = [&]() {
                     std::tm time = {};
@@ -203,7 +206,9 @@ namespace util {
                 }();
 
                 std::stringstream date;
-                date << year << "-" << std::setw(2) << std::setfill('0') << month << "-" << tokens.at(6);
+                date << year << "-";
+                date << std::setw(2) << std::setfill('0') << month << "-";
+                date << std::setw(2) << std::setfill('0') << tokens.at(6);
                 infos.emplace_back(file_info {
                         tokens.at(0),
                         tokens.at(2),
