@@ -43,6 +43,7 @@
 #include <functional>
 #include <iomanip>
 #include <iostream>
+#include <optional>
 #include <sstream>
 #include <stdexcept>
 #include <string>
@@ -131,7 +132,7 @@ namespace tarxx {
         [[nodiscard]] virtual mode_t mode(const std::string& path) const = 0;
         [[nodiscard]] virtual std::string read_symlink(const std::string& path) const = 0;
         [[nodiscard]] virtual bool file_exists(const std::string& path) const = 0;
-        [[nodiscard]] virtual std::pair<bool, std::string> file_equivalent_present(const std::string& path, const std::unordered_set<std::string>& stored_files) const = 0;
+        [[nodiscard]] virtual std::optional<std::string> file_equivalent_present(const std::string& path, const std::unordered_set<std::string>& stored_files) const = 0;
         [[nodiscard]] virtual std::string relative_path(std::string path) const
         {
             if (path.empty()) return "";
@@ -303,15 +304,15 @@ namespace tarxx {
             return std::filesystem::exists(path);
         };
 
-        [[nodiscard]] std::pair<bool, std::string> file_equivalent_present(const std::string& path,
-                                                                           const std::unordered_set<std::string>& stored_files) const override
+        [[nodiscard]] std::optional<std::string> file_equivalent_present(const std::string& path,
+                                                                         const std::unordered_set<std::string>& stored_files) const override
         {
             for (const auto& f : stored_files) {
                 if (std::filesystem::equivalent(f, path)) {
-                    return {true, f};
+                    return f;
                 }
             }
-            return {false, ""};
+            return {};
         }
     };
 
@@ -788,8 +789,8 @@ namespace tarxx {
             // we only store a new header but not the file again.
             if ((file_type == file_type_flag::REGULAR_FILE) || (file_type == file_type_flag::HARD_LINK)) {
                 const auto equivalent = platform_.file_equivalent_present(path, stored_files_);
-                if (equivalent.first) {
-                    link_name = equivalent.second;
+                if (equivalent.has_value()) {
+                    link_name = equivalent.value();
                     file_type = file_type_flag::HARD_LINK;
                 }
             }
