@@ -39,7 +39,7 @@ jobs:
             popd
 
       - name: Configure CMake
-        run: cmake -B ${{github.workspace}}/build -DCMAKE_BUILD_TYPE=${{env.BUILD_TYPE}} ${{ inputs.cmake_arguments }}
+        run: cmake -B ${{github.workspace}}/build -DWITH_TESTS=ON -DCMAKE_BUILD_TYPE=${{env.BUILD_TYPE}} ${{ inputs.cmake_arguments }}
 
       - name: Build
         # Build your program with the given configuration
@@ -47,7 +47,7 @@ jobs:
 
       - name: Unit tests
         working-directory: ${{github.workspace}}/build/tests/unit-tests
-        run: ctest
+        run: ${{github.workspace}}/build/tests/unit-tests/unit-tests
 
       - name: Component tests
         run: unbuffer -p "${{github.workspace}}/build/tests/component-tests/component-tests"
