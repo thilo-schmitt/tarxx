@@ -383,7 +383,7 @@ util::file_info create_fake_link(const tarxx::tarfile::tar_type& tar_type, const
 {
     return {
             .permissions = "lrwxrwxrwx",
-            .owner = tar_type == tarxx::tarfile::tar_type::ustar ? platform.user_name(user) : std::to_string(group),
+            .owner = tar_type == tarxx::tarfile::tar_type::ustar ? platform.user_name(user) : std::to_string(user),
             .group = tar_type == tarxx::tarfile::tar_type::ustar ? platform.group_name(group) : std::to_string(group),
             .size = 0U,
             .date = "1970-01-01",
@@ -663,8 +663,8 @@ TEST_P(tar_tests, add_directory_twice_via_streaming)
 
     util::file_info test_dir {
             .permissions = "drwxr-xr-x",
-            .owner = tar_type == tarxx::tarfile::tar_type::unix_v7 ? std::to_string(user) : platform.user_name(user),
-            .group = tar_type == tarxx::tarfile::tar_type::unix_v7 ? std::to_string(group) : platform.user_name(group),
+            .owner = tar_type == tarxx::tarfile::tar_type::ustar ? platform.user_name(user) : std::to_string(user),
+            .group = tar_type == tarxx::tarfile::tar_type::ustar ? platform.group_name(group) : std::to_string(group),
             .size = 0,
             .date = "1970-01-01",
             .time = "00:00",
