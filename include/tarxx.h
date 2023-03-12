@@ -205,6 +205,7 @@ namespace tarxx {
         [[nodiscard]] virtual uid_t file_owner(const std::string& path) const = 0;
         [[nodiscard]] virtual gid_t file_group(const std::string& path) const = 0;
         virtual void major_minor(const std::string& path, major_t& major, minor_t& minor) const = 0;
+        [[nodiscard]] virtual char path_separator() const = 0;
     };
 
     struct StdFilesytem : public Filesystem {
@@ -364,6 +365,10 @@ namespace tarxx {
             const auto file_stat = get_stat(path);
             return file_stat.st_gid;
         };
+        
+        [[nodiscard]] char path_separator() const override {
+            return '/';
+        }
 
     protected:
         static struct passwd* passwd()
@@ -946,18 +951,28 @@ namespace tarxx {
             if (name.size() <= UNIX_V7_USTAR_HEADER_LEN_NAME || type_ == tar_type::unix_v7) {
                 write_name_unix_v7_format();
             } else {
-                const auto last_slash_index = name.rfind('/');
-                if (last_slash_index == std::string::npos) {
+                const auto last_separator_index = name.rfind(platform_.path_separator());
+                if (last_separator_index == std::string::npos) {
                     write_name_unix_v7_format();
                 } else {
-                    const auto remaining_length = name.size() - last_slash_index;
-                    const auto length = remaining_length > UNIX_V7_USTAR_HEADER_LEN_NAME ? UNIX_V7_USTAR_HEADER_LEN_NAME
-                                                                                         : remaining_length;
-
-                    write_into_block(block, name.c_str() + last_slash_index + 1, UNIX_V7_USTAR_HEADER_POS_NAME, length);
-                    write_into_block(block, name, USTAR_HEADER_POS_PREFIX, last_slash_index);
-                }
+                    // create the prefix by trimming the name to the prefix length
+                    const auto prefix_trimmed = name.substr(0, USTAR_HEADER_LEN_PREFIX);
+                    const auto last_separator_in_prefix = prefix_trimmed.rfind(platform_.path_separator());
+                    if (last_separator_in_prefix == std::string::npos) {
+                        // no possible delimiter found to splice part 
+                        // write name in unix v7 and truncate at the end
+                        write_name_unix_v7_format();
+                    } else {
+                        // create the prefix by cutting at the found delimiter
+                        const auto prefix = std::string(name.begin(), name.begin() + last_separator_in_prefix);
+                        write_into_block(block, prefix, USTAR_HEADER_POS_PREFIX, USTAR_HEADER_LEN_PREFIX);
+                        
+                        // name is remaining part of the string
+                        const auto split_name = std::string(name.begin() + last_separator_in_prefix + 1, name.end());
+                        write_into_block(block, split_name, UNIX_V7_USTAR_HEADER_POS_NAME, UNIX_V7_USTAR_HEADER_LEN_NAME);
+                    }
             }
+        }
         }
 
         void check_state_and_flush()
