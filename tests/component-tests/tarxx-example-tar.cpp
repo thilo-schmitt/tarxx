@@ -1,5 +1,5 @@
 // tarxx - modern C++ tar library
-// Copyright (c) 2022, Thilo Schmitt, Alexander Mohr
+// Copyright (c) 2022-2023, Thilo Schmitt, Alexander Mohr
 // All rights reserved.
 //
 // Redistribution and use in source and binary forms, with or without
@@ -23,10 +23,11 @@
 // OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 // OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
-#include <filesystem>
 #include <gtest/gtest.h>
 #include <sstream>
 #include <util/util.h>
+
+class tarxx_example : public ::testing::TestWithParam<tarxx::tarfile::tar_type> {};
 
 TEST(tarxx_example, no_arguments)
 {
@@ -47,75 +48,87 @@ TEST(tarxx_example, create_argument_only)
     EXPECT_NE(util::execute(const_cast<char*>(TARXX_EXAMPLE_BINARY_PATH), const_cast<char*>("-c")), 0);
 }
 
-TEST(tarxx_example, from_file_to_file)
+TEST_P(tarxx_example, from_file_to_file)
 {
-    const auto [dir, test_files] = util::create_multiple_test_files_with_sub_folders();
+    const auto tar_type = GetParam();
+    const auto [dir, test_files] = util::create_multiple_test_files_with_sub_folders(tar_type);
     EXPECT_EQ(test_files.size(), 2);
 
-    const auto tar_filename = (std::filesystem::temp_directory_path() / "test.tar").string();
-    util::remove_file_if_exists(tar_filename);
+    const auto tar_filename = util::tar_file_name();
+    util::remove_if_exists(tar_filename);
 
+    const auto type_str = std::to_string(static_cast<int>(tar_type));
     util::execute(TARXX_EXAMPLE_BINARY_PATH,
-                  const_cast<char*>("-cf"),
+                  const_cast<char*>("-ct"),
+                  const_cast<char*>(type_str.c_str()),
+                  const_cast<char*>("-f"),
                   const_cast<char*>(tar_filename.c_str()),
                   const_cast<char*>(test_files.at(0).path.c_str()),
                   const_cast<char*>(test_files.at(1).path.c_str()));
 
-    util::expect_files_in_tar(tar_filename, test_files);
-    std::filesystem::remove_all(dir);
+    util::expect_files_in_tar(tar_filename, test_files, tar_type);
+    util::remove_if_exists(dir);
 }
 
-TEST(tarxx_example, from_stream_to_file)
+TEST_P(tarxx_example, from_stream_to_file)
 {
-    const auto test_file = util::create_test_file();
+    const auto tar_type = GetParam();
+    const auto test_file = util::create_test_file(tar_type);
 
-    const auto tar_filename = std::filesystem::temp_directory_path() / "test.tar";
-    util::remove_file_if_exists(tar_filename);
+    const auto tar_filename = util::tar_file_name();
+    util::remove_if_exists(tar_filename);
 
-
+    const auto type_str = std::to_string(static_cast<int>(tar_type));
     util::execute(const_cast<char*>(TARXX_EXAMPLE_BINARY_PATH),
-                  const_cast<char*>("-cf"),
+                  const_cast<char*>("-ct"),
+                  const_cast<char*>(type_str.c_str()),
+                  const_cast<char*>("-f"),
                   const_cast<char*>(tar_filename.c_str()),
                   const_cast<char*>(test_file.path.c_str()));
 
-    util::expect_files_in_tar(tar_filename, {test_file});
-    std::filesystem::remove(test_file.path);
+    util::expect_files_in_tar(tar_filename, {test_file}, tar_type);
+    util::remove_if_exists(test_file.path);
 }
 
-TEST(tarxx_example, from_file_to_stream)
+TEST_P(tarxx_example, from_file_to_stream)
 {
-    const auto [dir, test_files] = util::create_multiple_test_files_with_sub_folders();
+    const auto tar_type = GetParam();
+    const auto [dir, test_files] = util::create_multiple_test_files_with_sub_folders(tar_type);
     const auto test_files_str = util::test_files_as_str(test_files);
 
-    const auto tar_filename = std::filesystem::temp_directory_path() / "test.tar";
-    util::remove_file_if_exists(tar_filename);
+    const auto tar_filename = util::tar_file_name();
+    util::remove_if_exists(tar_filename);
 
     std::stringstream cmd;
-    cmd << TARXX_EXAMPLE_BINARY_PATH<< " -c " << test_files_str << " > " << tar_filename.string();
-    util::execute("bash",
+    cmd << TARXX_EXAMPLE_BINARY_PATH << " -ct " << static_cast<int>(tar_type) << " " << test_files_str << " > " << tar_filename;
+    util::execute("sh",
                   const_cast<char*>("-c"),
                   const_cast<char*>(cmd.str().c_str()));
 
-    util::expect_files_in_tar(tar_filename, test_files);
-    std::filesystem::remove_all(dir);
+    util::expect_files_in_tar(tar_filename, test_files, tar_type);
+    util::remove_if_exists(dir);
 }
 
-TEST(tarxx_example, from_stream_to_stream)
+TEST_P(tarxx_example, from_stream_to_stream)
 {
-    const auto test_file = util::create_test_file();
+    const auto tar_type = GetParam();
+    const auto test_file = util::create_test_file(tar_type);
     const auto test_file_str = util::test_files_as_str({test_file});
 
-    const auto tar_filename = std::filesystem::temp_directory_path() / "test.tar";
-    util::remove_file_if_exists(tar_filename);
+    const auto tar_filename = util::tar_file_name();
+    util::remove_if_exists(tar_filename);
 
     std::stringstream cmd;
     cmd << "cat " << test_file_str << "|"
-        << TARXX_EXAMPLE_BINARY_PATH << " -c "
-        << " > " << tar_filename.string();
-    util::execute("bash",
+        << TARXX_EXAMPLE_BINARY_PATH << " -ct "
+        << static_cast<int>(tar_type)
+        << " > " << tar_filename;
+    util::execute("sh",
                   const_cast<char*>("-c"),
                   const_cast<char*>(cmd.str().c_str()));
 
-    util::expect_files_in_tar(tar_filename, {});
-    std::filesystem::remove(test_file.path);
+    util::expect_files_in_tar(tar_filename, {}, tar_type);
+    util::remove_if_exists(test_file.path);
 }
+
+INSTANTIATE_TEST_SUITE_P(tar_type_dependent, tarxx_example, ::testing::Values(tarxx::tarfile::tar_type::unix_v7, tarxx::tarfile::tar_type::ustar));
