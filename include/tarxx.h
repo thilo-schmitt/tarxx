@@ -42,7 +42,6 @@
 #include <fstream>
 #include <functional>
 #include <iomanip>
-#include <iostream>
 #include <optional>
 #include <sstream>
 #include <stdexcept>
@@ -365,8 +364,9 @@ namespace tarxx {
             const auto file_stat = get_stat(path);
             return file_stat.st_gid;
         };
-        
-        [[nodiscard]] char path_separator() const override {
+
+        [[nodiscard]] char path_separator() const override
+        {
             return '/';
         }
 
@@ -505,10 +505,44 @@ namespace tarxx {
             }
         }
 
+        void add_from_filesystem_recursive(const std::string& source_path, std::string target_path)
+        {
+            if (target_path.find("../") != std::string::npos) throw std::invalid_argument("target path can't contain ../");
+            if (target_path.find("/..") != std::string::npos) throw std::invalid_argument("target path can't contain /..");
+            if (target_path == "..") throw std::invalid_argument("target path can't be ..");
+            if (target_path.empty()) throw std::invalid_argument("target path cannot be empty");
+            if (target_path.rfind('/') == target_path.size() - 1) target_path = target_path.substr(0, target_path.size() - 1);
+
+            if (platform_.type_flag(source_path) != file_type_flag::DIRECTORY) {
+                add_from_filesystem(source_path, target_path);
+            } else {
+                platform_.iterateDirectory(source_path, [&](const std::string& callback_path) {
+                    auto target = callback_path;
+                    target.replace(target.begin(), target.begin() + source_path.size(), target_path);
+                    add_from_filesystem(callback_path, target);
+                });
+            }
+        }
+
         void add_from_filesystem(const std::string& filename)
         {
             check_state_and_flush();
-            read_from_filesystem_write_to_tar(filename);
+            read_from_filesystem_write_to_tar(filename, filename);
+        }
+
+        void add_from_filesystem(const std::string& source_path, const std::string& target_path)
+        {
+            if (target_path.find("../") != std::string::npos) throw std::invalid_argument("target path can't contain ../");
+            if (target_path.find("/..") != std::string::npos) throw std::invalid_argument("target path can't contain /..");
+            if (target_path == "..") throw std::invalid_argument("target path can't be ..");
+            if (target_path.empty()) throw std::invalid_argument("target path cannot be empty");
+
+            if (platform_.type_flag(source_path) != file_type_flag::DIRECTORY && target_path.rfind('/') == target_path.size() - 1) {
+                throw std::invalid_argument("target path can't end with / for non directories");
+            }
+
+            check_state_and_flush();
+            read_from_filesystem_write_to_tar(source_path, target_path);
         }
 
         void add_symlink(const std::string& file_name, const std::string& link_name, uid_t uid, gid_t gid, mod_time_t time)
@@ -771,10 +805,10 @@ namespace tarxx {
             }
         }
 
-        void read_from_filesystem_write_to_tar(const std::string& path)
+        void read_from_filesystem_write_to_tar(const std::string& source_path, const std::string& target_path)
         {
-            if (!platform_.file_exists(path)) throw std::invalid_argument(path + " does not exist");
-            if (path == file_name_) throw std::invalid_argument("tar cannot be part of itself");
+            if (!platform_.file_exists(source_path)) throw std::invalid_argument(source_path + " does not exist");
+            if (source_path == file_name_) throw std::invalid_argument("tar cannot be part of itself");
 
             std::function<void()> write_data;
 
@@ -782,18 +816,18 @@ namespace tarxx {
             major_t dev_major = 0;
             minor_t dev_minor = 0;
             std::string link_name;
-            std::string file_name = path;
-            const auto file_uid = platform_.file_owner(path);
-            const auto file_gid = platform_.file_group(path);
-            auto mode = platform_.mode(path);
+            std::string file_name = target_path;
+            const auto file_uid = platform_.file_owner(source_path);
+            const auto file_gid = platform_.file_group(source_path);
+            auto mode = platform_.mode(source_path);
 
-            auto file_type = platform_.type_flag(path);
+            auto file_type = platform_.type_flag(source_path);
 
             // regular files should only be stored once in the archive
             // if the same file is added again (i.e. via a hard link)
             // we only store a new header but not the file again.
             if ((file_type == file_type_flag::REGULAR_FILE) || (file_type == file_type_flag::HARD_LINK)) {
-                const auto equivalent = platform_.file_equivalent_present(path, stored_files_);
+                const auto equivalent = platform_.file_equivalent_present(source_path, stored_files_);
                 if (equivalent.has_value()) {
                     link_name = equivalent.value();
                     file_type = file_type_flag::HARD_LINK;
@@ -803,18 +837,18 @@ namespace tarxx {
             switch (file_type) {
                 case file_type_flag::REGULAR_FILE:
                     write_data = [&]() {
-                        write_regular_file(path);
+                        write_regular_file(source_path);
                     };
-                    size = platform_.file_size(path);
+                    size = platform_.file_size(source_path);
                     break;
                 case file_type_flag::CHARACTER_SPECIAL_FILE:
                     [[fallthrough]];
                 case file_type_flag::BLOCK_SPECIAL_FILE:
-                    platform_.major_minor(path, dev_major, dev_minor);
+                    platform_.major_minor(source_path, dev_major, dev_minor);
                     break;
                 case file_type_flag::SYMBOLIC_LINK:
                     mode = static_cast<mode_t>(permission_t::all_all);
-                    link_name = platform_.read_symlink(path);
+                    link_name = platform_.read_symlink(source_path);
                     break;
                 case file_type_flag::CONTIGUOUS_FILE:
                     // won't happen as we would have to set the contiguous flag.
@@ -839,7 +873,7 @@ namespace tarxx {
                     file_uid,
                     file_gid,
                     size,
-                    platform_.mod_time(path),
+                    platform_.mod_time(source_path),
                     file_type,
                     dev_major,
                     dev_minor,
@@ -959,20 +993,20 @@ namespace tarxx {
                     const auto prefix_trimmed = name.substr(0, USTAR_HEADER_LEN_PREFIX);
                     const auto last_separator_in_prefix = prefix_trimmed.rfind(platform_.path_separator());
                     if (last_separator_in_prefix == std::string::npos) {
-                        // no possible delimiter found to splice part 
+                        // no possible delimiter found to splice part
                         // write name in unix v7 and truncate at the end
                         write_name_unix_v7_format();
                     } else {
                         // create the prefix by cutting at the found delimiter
                         const auto prefix = std::string(name.begin(), name.begin() + last_separator_in_prefix);
                         write_into_block(block, prefix, USTAR_HEADER_POS_PREFIX, USTAR_HEADER_LEN_PREFIX);
-                        
+
                         // name is remaining part of the string
                         const auto split_name = std::string(name.begin() + last_separator_in_prefix + 1, name.end());
                         write_into_block(block, split_name, UNIX_V7_USTAR_HEADER_POS_NAME, UNIX_V7_USTAR_HEADER_LEN_NAME);
                     }
+                }
             }
-        }
         }
 
         void check_state_and_flush()

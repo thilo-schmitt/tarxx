@@ -260,6 +260,39 @@ TEST_P(tar_tests, add_multiple_files_recursive_success)
     std::filesystem::remove_all(dir);
 }
 
+TEST_P(tar_tests, add_multiple_files_recursive_new_name)
+{
+    std::vector<std::string> new_names = {
+            "new_root",
+            "new_root/",
+            "/new_root/",
+            "/new_root",
+            "new_root/with_subfolder",
+            "new_root/with_subfolder/"};
+
+    for (auto& new_name : new_names) {
+        const auto tar_type = GetParam();
+        const auto tar_filename = util::tar_file_name();
+        auto [dir, test_files] = util::create_multiple_test_files_with_sub_folders(tar_type);
+        util::remove_if_exists(tar_filename);
+
+        tarxx::tarfile tar_file(tar_filename, tar_type);
+        tar_file.add_from_filesystem_recursive(dir, new_name);
+        tar_file.close();
+
+        util::append_folders_from_test_files(test_files, tar_type);
+
+        for (auto& file : test_files) {
+            if (new_name.rfind("/") == new_name.size() - 1) {
+                new_name = new_name.substr(0, new_name.size() - 1);
+            }
+            file.path.replace(file.path.begin(), file.path.begin() + dir.string().size(), new_name);
+        }
+        util::expect_files_in_tar(tar_filename, test_files, tar_type);
+        std::filesystem::remove_all(dir);
+    }
+}
+
 void tar_validate_streaming_data(const unsigned int size, const tarxx::tarfile::tar_type& tar_type)
 {
     const auto tar_filename = util::tar_file_name();
@@ -272,6 +305,50 @@ void tar_validate_streaming_data(const unsigned int size, const tarxx::tarfile::
     tar_file.close();
 
     util::tar_has_one_file_and_matches(tar_filename, test_file, tar_type);
+}
+
+TEST_P(tar_tests, add_from_filesystem_different_name)
+{
+    const std::vector<std::string> new_names = {
+            "this-is-a-new-name",
+            "tmp/new-name"};
+
+    for (const auto& new_name : new_names) {
+        const auto tar_type = GetParam();
+        const auto tar_filename = util::tar_file_name();
+        const auto test_file = util::create_test_file(tar_type);
+        util::remove_if_exists(tar_filename);
+
+        tarxx::tarfile f(tar_filename, tar_type);
+        f.add_from_filesystem(test_file.path, new_name);
+        f.close();
+
+        const auto files = util::files_in_tar_archive(tar_filename);
+        EXPECT_EQ(files.size(), 1);
+        auto expected_file = files.at(0);
+        expected_file.path = new_name;
+        util::file_from_tar_matches_original_file(expected_file, files.at(0), tar_type);
+    }
+}
+
+TEST_P(tar_tests, add_from_filesystem_different_invalid_name)
+{
+    const std::vector<std::string> new_names = {
+            "..",
+            "not/../good",
+            "",
+            "also/not/good/..",
+            "tmp/false-directory/"};
+
+    const auto tar_type = GetParam();
+    const auto tar_filename = util::tar_file_name();
+    const auto test_file = util::create_test_file(tar_type);
+    util::remove_if_exists(tar_filename);
+
+    tarxx::tarfile f(tar_filename, tar_type);
+    for (const auto& new_name : new_names) {
+        EXPECT_THROW(f.add_from_filesystem(test_file.path, new_name), std::invalid_argument);
+    }
 }
 
 TEST_P(tar_tests, add_from_filesystem_stream_data_smaller_than_block_size)
