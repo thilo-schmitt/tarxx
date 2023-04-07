@@ -4,8 +4,7 @@
 library for dealing with `tar`-format files.
 
 This was written for self-educational purposes only and is (at 
-least for the moment) merely a quick rough hack. It is far from 
-what I would call a professional grade project and by no means 
+least for the moment) merely a quick rough hack and by no means 
 complete or finished. It might get better over time, it might 
 get more complete over time and it might get more polished over 
 time - in every aspect of it.
@@ -26,6 +25,16 @@ Run tests with these commands
 ```
 
 ## Version history
+
+### 0.3.0
+
+- full UNIX v7 support for writing tars
+  (including directories, links, special files)
+- full ustar support for writing tars
+- platform abstraction layer (but still Linux supported only)
+- add directories/files from filesystem with another name to the archive
+- fixes and general code improvements
+- more and improved testing
 
 ### 0.2.0
 
