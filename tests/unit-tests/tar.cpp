@@ -1091,6 +1091,18 @@ TEST(tar_tests, add_from_filesystem_ustar_prefix_used)
 }
 
 #if defined(__linux)
+TEST(tar_tests, errno_exception)
+{
+    const auto msg = "Operation not permitted";
+    const auto error = 1;
+    errno = error;
+    tarxx::errno_exception e;
+    EXPECT_EQ(e.code().message(), msg);
+
+    tarxx::errno_exception e2(error);
+    EXPECT_EQ(e.code().message(), msg);
+}
+
 TEST(tar_tests, add_char_special_device_from_filesystem)
 {
     if (util::tar_version() != util::tar_version::gnu) {
