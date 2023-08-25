@@ -438,7 +438,9 @@ TEST_P(tar_tests, add_link_from_filesystem)
 
     std::filesystem::create_symlink(test_file.path, link_location);
     util::file_info link_test_file {
-            .path = link_location};
+            .path = link_location,
+            .is_symlink = true};
+
     util::file_info_set_stat(link_test_file, tar_type);
 
     tarxx::tarfile tar_file(tar_filename, tar_type);
