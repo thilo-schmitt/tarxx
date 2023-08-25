@@ -32,6 +32,7 @@
 #ifdef __linux
 #    include <sys/socket.h>
 #    include <sys/un.h>
+#    include <thread>
 
 #endif
 
@@ -679,6 +680,138 @@ TEST_P(tar_tests, add_directory_from_filesystem)
 
     util::expect_files_in_tar(tar_filename, {test_dir}, tar_type);
 }
+
+TEST_P(tar_tests, add_from_filesystem_file_grows_while_reading)
+{
+    const auto tar_type = GetParam();
+    const auto tar_filename = util::tar_file_name();
+    util::remove_if_exists(tar_filename);
+
+    tarxx::tarfile tar_file(tar_filename, tar_type);
+    const auto test_file = util::grow_source_file_during_tar_creation(tar_file, tar_type);
+    expect_disk_file_ge_file_in_tar_and_tar_valid(tar_filename, test_file, tar_type);
+}
+
+TEST_P(tar_tests, add_from_filesystem_file_grows_while_reading_streaming_output)
+{
+    const auto tar_type = GetParam();
+    const auto tar_filename = util::tar_file_name();
+    auto file_name = "appending_file"s;
+
+    auto test_file = util::create_test_file(tar_type, std::filesystem::temp_directory_path() / file_name);
+    util::remove_if_exists(tar_filename);
+
+    auto abort_appending = false;
+    auto append_thread_running = false;
+    auto append_thread = append_to_file_in_thread(test_file, append_thread_running, abort_appending);
+
+    std::ofstream ofs(tar_filename);
+    const auto write_callback = [&](const tarxx::block_t& data, size_t size) {
+        ofs.write(data.data(), size);
+    };
+
+    tarxx::tarfile f(std::move(write_callback), tar_type);
+    f.add_from_filesystem(test_file.path);
+    f.close();
+    abort_appending = true;
+    append_thread.join();
+
+    ofs.close();
+
+    expect_disk_file_ge_file_in_tar_and_tar_valid(tar_filename, test_file, tar_type);
+}
+
+TEST_P(tar_tests, add_from_filesystem_file_shrinks_while_reading)
+{
+    const auto tar_type = GetParam();
+    const auto tar_filename = util::tar_file_name();
+    util::remove_if_exists(tar_filename);
+
+    tarxx::tarfile tar_file(tar_filename, tar_type);
+    const auto test_file = util::shrink_source_file_during_tar_creation(tar_file, tar_type);
+    expect_disk_file_le_file_in_tar_and_tar_valid(tar_filename, test_file, tar_type);
+}
+
+TEST_P(tar_tests, add_from_filesystem_file_shrinks_while_reading_streaming_output)
+{
+    const auto tar_type = GetParam();
+    const auto tar_filename = util::tar_file_name();
+    auto file_name = "shrinking_file"s;
+
+    auto test_file = util::create_test_file_with_size(tar_type, 250 * 1024 * 1024, std::filesystem::temp_directory_path() / file_name);
+
+    util::remove_if_exists(tar_filename);
+    auto abort_removing = false;
+    auto remove_thread_running = false;
+    auto remove_thread = remove_from_file_in_thread(test_file, remove_thread_running, abort_removing);
+
+    std::ofstream ofs(tar_filename);
+    const auto write_callback = [&](const tarxx::block_t& data, size_t size) {
+        ofs.write(data.data(), size);
+    };
+
+    tarxx::tarfile f(std::move(write_callback), tar_type);
+    f.add_from_filesystem(test_file.path);
+    f.close();
+    ofs.flush();
+    ofs.close();
+
+    abort_removing = true;
+    remove_thread.join();
+
+    expect_disk_file_le_file_in_tar_and_tar_valid(tar_filename, test_file, tar_type);
+}
+
+#ifdef __linux
+TEST_P(tar_tests, add_from_filesystem_procinfo)
+{
+    const auto tar_type = GetParam();
+    const auto tar_filename = util::tar_file_name();
+    util::remove_if_exists(tar_filename);
+
+    const auto out_dir = std::filesystem::temp_directory_path() / "add_from_filesystem_procinfo";
+    util::remove_if_exists(out_dir.string());
+    std::filesystem::create_directories(out_dir.string());
+
+    tarxx::tarfile f(tar_filename, tar_type);
+    const auto proc_cpuinfo = "/proc/cpuinfo";
+    f.add_from_filesystem(proc_cpuinfo);
+    f.close();
+
+
+    util::extract_tar(tar_filename, out_dir);
+    tarxx::Platform platform;
+    std::stringstream cpu_info_tar;
+    std::stringstream cpu_info_os;
+    {
+        std::ifstream ifs(out_dir / "proc/cpuinfo");
+        cpu_info_tar << ifs.rdbuf();
+    }
+
+    {
+        std::ifstream ifs(proc_cpuinfo);
+        cpu_info_os << ifs.rdbuf();
+    }
+
+    const auto tar_cpu_info = util::split_string(cpu_info_tar.str(), '\n');
+    const auto os_cpu_info = util::split_string(cpu_info_os.str(), '\n');
+
+    ASSERT_EQ(tar_cpu_info.size(), os_cpu_info.size());
+    for (auto i = 0; i < tar_cpu_info.size(); ++i) {
+        const auto& tar_cpu_line = tar_cpu_info.at(i);
+        const auto& os_cpu_line = os_cpu_info.at(i);
+
+        // we have to ignore the frequency as the kernel dynamically changes
+        // this based on the current demand
+        if (tar_cpu_line.find("MHz") != std::string::npos) {
+            continue;
+        }
+
+        EXPECT_EQ(tar_cpu_line, os_cpu_line);
+    }
+}
+
+#endif
 
 TEST_P(tar_tests, add_directory_via_streaming)
 {

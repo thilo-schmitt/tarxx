@@ -40,6 +40,7 @@
 #include <set>
 #include <sstream>
 #include <string>
+#include <thread>
 #include <vector>
 
 namespace util {
@@ -140,7 +141,7 @@ namespace util {
         std::string tar_output;
         const auto tar_result = execute_with_output("tar -tvf " + filename, tar_output);
         if (tar_result != 0) {
-            throw std::runtime_error("Failed to list files in tar");
+            throw std::runtime_error("Failed to list files in tar, error=" + std::to_string(tar_result) + ", output=" + tar_output);
         }
 
         const auto tar_output_lines = split_string(tar_output, 0xa);
@@ -228,6 +229,15 @@ namespace util {
         return infos;
     }
 
+    inline void extract_tar(const std::string& tar_file, const std::string& out_dir)
+    {
+        std::string output;
+        if (execute_with_output("tar -xf " + tar_file + " -C " + out_dir, output) != 0) {
+            throw std::runtime_error("Failed to extract tar, what=" + output);
+        }
+    }
+
+
     inline void remove_if_exists(const std::string& filename)
     {
         if (std::filesystem::exists(filename))
@@ -308,6 +318,22 @@ namespace util {
         return file;
     }
 
+    inline file_info create_test_file_with_size(
+            const tarxx::tarfile::tar_type& tar_type,
+            const size_t size,
+            const std::filesystem::path& test_file_path = std::filesystem::temp_directory_path() / "test_file")
+    {
+        auto test_file = create_test_file(tar_type, test_file_path, "");
+        std::ofstream ofs(test_file.path);
+        std::array<char, 1024> input {'a'};
+        // write 250mb of 'a'
+        for (auto i = 0; i < size; i += input.size()) {
+            ofs << input.data();
+        }
+
+        return test_file;
+    }
+
     inline file_info create_test_directory(
             const tarxx::tarfile::tar_type& tar_type,
             const std::filesystem::path& test_file_path = std::filesystem::temp_directory_path() / "test_dir")
@@ -364,12 +390,15 @@ namespace util {
         return test_files_str.str();
     }
 
-    inline void file_from_tar_matches_original_file(const util::file_info& test_file, const util::file_info& file_in_tar, const tarxx::tarfile::tar_type& tar_type)
+    inline void file_from_tar_matches_original_file(const file_info& test_file, const file_info& file_in_tar, const tarxx::tarfile::tar_type& tar_type, const bool ignore_size = false)
     {
         const tarxx::Platform platform;
         const auto path = platform.relative_path(test_file.path);
         EXPECT_EQ(path, file_in_tar.path);
-        EXPECT_EQ(test_file.size, file_in_tar.size);
+        // size may be ignored for tests where the file changes during creation of tar archive
+        if (!ignore_size)
+            EXPECT_EQ(test_file.size, file_in_tar.size);
+
         EXPECT_EQ(test_file.date, file_in_tar.date);
         EXPECT_EQ(test_file.permissions, file_in_tar.permissions);
         EXPECT_EQ(file_in_tar.owner, test_file.owner);
@@ -391,7 +420,7 @@ namespace util {
         util::file_from_tar_matches_original_file(original, files.at(0), tar_type);
     }
 
-    inline void expect_files_in_tar(const std::string& tar_filename, const std::vector<util::file_info>& expected_files, const tarxx::tarfile::tar_type& tar_type)
+    inline void expect_files_in_tar(const std::string& tar_filename, const std::vector<util::file_info>& expected_files, const tarxx::tarfile::tar_type& tar_type, const bool ignore_size = false)
     {
         const tarxx::Platform platform;
         const auto files_in_tar = util::files_in_tar_archive(tar_filename);
@@ -406,7 +435,7 @@ namespace util {
                 if (found_file.link_name != expected_link_name) continue;
 
                 expected_file_found = true;
-                util::file_from_tar_matches_original_file(expected_file, found_file, tar_type);
+                util::file_from_tar_matches_original_file(expected_file, found_file, tar_type, ignore_size);
             }
             if (!expected_file_found) {
                 std::cerr << "Missing " << found_file.path << " in tar archive\n";
@@ -438,6 +467,106 @@ namespace util {
         return std::filesystem::temp_directory_path() / "test.tar";
     }
 
+    inline std::thread append_to_file_in_thread(const util::file_info& test_file, bool& append_thread_running, bool& abort_appending)
+    {
+        append_thread_running = false;
+        auto append_thread = std::thread([&]() {
+            std::ofstream ofs(test_file.path);
+            append_thread_running = true;
+            while (!abort_appending) {
+                // flushing is important so file content on disk changes
+                ofs << "test" << std::endl;
+            }
+        });
+
+        while (!append_thread_running) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(250));
+        }
+        return append_thread;
+    }
+
+
+    inline std::thread remove_from_file_in_thread(const util::file_info& test_file, bool& remove_thread_running, bool& abort_removing)
+    {
+        auto remove_thread = std::thread([&]() {
+            while (!abort_removing) {
+                const tarxx::Platform platform;
+                remove_thread_running = true;
+                const long new_size = platform.file_size(test_file.path) - 1;
+                ASSERT_EQ(platform.truncate(test_file.path, new_size), 0);
+            }
+        });
+
+        while (!remove_thread_running) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(250));
+        }
+
+        return remove_thread;
+    }
+
+    inline void expect_disk_file_ge_file_in_tar_and_tar_valid(const std::string& tar_filename,
+                                                              const file_info& test_file,
+                                                              const tarxx::tarfile::tar_type& tar_type)
+    {
+        const tarxx::Platform platform;
+        const auto files_in_tar = util::files_in_tar_archive(tar_filename);
+        EXPECT_GE(platform.file_size(test_file.path), files_in_tar.at(0).size);
+        util::expect_files_in_tar(tar_filename, {test_file}, tar_type, true);
+    }
+
+    inline void expect_disk_file_le_file_in_tar_and_tar_valid(const std::string& tar_filename,
+                                                              const file_info& test_file,
+                                                              const tarxx::tarfile::tar_type& tar_type)
+    {
+        const tarxx::Platform platform;
+        const auto files_in_tar = util::files_in_tar_archive(tar_filename);
+        EXPECT_LE(platform.file_size(test_file.path), files_in_tar.at(0).size);
+        util::expect_files_in_tar(tar_filename, {test_file}, tar_type, true);
+    }
+
+    inline file_info grow_source_file_during_tar_creation(
+            tarxx::tarfile& tar_file,
+            const tarxx::tarfile::tar_type& tar_type)
+    {
+        std::string file_name = "appending_file";
+
+        auto test_file = util::create_test_file(tar_type, std::filesystem::temp_directory_path() / file_name);
+        auto abort_appending = false;
+        auto append_thread_running = false;
+
+        auto append_thread = append_to_file_in_thread(test_file, append_thread_running, abort_appending);
+
+        tar_file.add_from_filesystem(test_file.path);
+        tar_file.close();
+
+        abort_appending = true;
+        append_thread.join();
+
+        return test_file;
+    }
+
+    inline file_info shrink_source_file_during_tar_creation(
+            tarxx::tarfile& tar_file,
+            const tarxx::tarfile::tar_type& tar_type)
+    {
+        const auto tar_filename = util::tar_file_name();
+        std::string file_name = "shrinking_file";
+
+        auto test_file = util::create_test_file_with_size(tar_type, 250 * 1024 * 1024, std::filesystem::temp_directory_path() / file_name);
+
+        auto abort_removing = false;
+        auto remove_thread_running = false;
+        auto remove_thread = remove_from_file_in_thread(test_file, remove_thread_running, abort_removing);
+
+        tar_file.add_from_filesystem(test_file.path);
+        tar_file.close();
+
+        abort_removing = true;
+        remove_thread.join();
+
+        return test_file;
+    }
+
 #ifdef WITH_LZ4
 
     inline void decompress_lz4(const std::string& lz4_in, const std::string& tar_out)
@@ -445,8 +574,9 @@ namespace util {
         std::string lz4_output;
         std::stringstream cmd;
         cmd << "lz4 -cdf " << lz4_in << ">" << tar_out;
-        if (execute_with_output(cmd.str(), lz4_output) != 0) {
-            throw std::runtime_error("Failed to decompress lz4 file: " + lz4_in + ", error=" + lz4_output);
+        const auto result = execute_with_output(cmd.str(), lz4_output);
+        if (result != 0) {
+            throw std::runtime_error("Failed to decompress lz4 file: " + lz4_in + " code=" + std::to_string(result) + ", output=" + lz4_output);
         }
     }
 

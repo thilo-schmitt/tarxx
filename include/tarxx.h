@@ -205,6 +205,7 @@ namespace tarxx {
         [[nodiscard]] virtual gid_t file_group(const std::string& path) const = 0;
         virtual void major_minor(const std::string& path, major_t& major, minor_t& minor) const = 0;
         [[nodiscard]] virtual char path_separator() const = 0;
+        [[nodiscard]] virtual int truncate(const std::string& path, long length) const = 0;
     };
 
     struct StdFilesytem : public Filesystem {
@@ -369,6 +370,12 @@ namespace tarxx {
         {
             return '/';
         }
+
+        [[nodiscard]] int truncate(const std::string& path, const long length) const override
+        {
+            return ::truncate(path.c_str(), static_cast<off_t>(length));
+        }
+
 
     protected:
         static struct passwd* passwd()
@@ -792,18 +799,46 @@ namespace tarxx {
             }
         }
 
-        void write_regular_file(const std::string& name)
+        void write_regular_file_const_size(const std::string& name, const size_t expected_size)
         {
             block_t block {};
             std::fstream infile(name, std::ios::in | std::ios::binary);
             if (!infile.is_open()) throw std::runtime_error("Can't find input file " + name);
+            size_t processed_bytes = 0;
+            while (infile.good() && processed_bytes < expected_size) {
+                infile.read(block.data(), block.size());
+                const auto read = infile.gcount();
+                processed_bytes += read;
+                const auto write_size = processed_bytes < expected_size ? read : processed_bytes - expected_size;
+
+                if (write_size < block.size()) std::fill_n(block.begin() + write_size, block.size() - write_size, 0);
+                write(block);
+            }
+
+            std::fill_n(block.begin(), block.size(), 0);
+            while (processed_bytes < expected_size) {
+                write(block);
+                processed_bytes += block.size();
+            }
+        }
+
+        size_t write_regular_file_dynamic_size(const std::string& name)
+        {
+            block_t block {};
+            std::fstream infile(name, std::ios::in | std::ios::binary);
+            if (!infile.is_open()) throw std::runtime_error("Can't find input file " + name);
+            long processed_bytes = 0;
             while (infile.good()) {
                 infile.read(block.data(), block.size());
                 const auto read = infile.gcount();
+                processed_bytes += read;
                 if (read < block.size()) std::fill_n(block.begin() + read, block.size() - read, 0);
                 write(block);
             }
+
+            return processed_bytes;
         }
+
 
         void read_from_filesystem_write_to_tar(const std::string& source_path, const std::string& target_path)
         {
@@ -816,12 +851,12 @@ namespace tarxx {
             major_t dev_major = 0;
             minor_t dev_minor = 0;
             std::string link_name;
-            std::string file_name = target_path;
             const auto file_uid = platform_.file_owner(source_path);
             const auto file_gid = platform_.file_group(source_path);
             auto mode = platform_.mode(source_path);
 
             auto file_type = platform_.type_flag(source_path);
+            const auto defer_header_writing = file_type == file_type_flag::REGULAR_FILE && mode_ == output_mode::file_output;
 
             // regular files should only be stored once in the archive
             // if the same file is added again (i.e. via a hard link)
@@ -837,7 +872,11 @@ namespace tarxx {
             switch (file_type) {
                 case file_type_flag::REGULAR_FILE:
                     write_data = [&]() {
-                        write_regular_file(source_path);
+                        if (defer_header_writing) {
+                            size = write_regular_file_dynamic_size(source_path);
+                        } else {
+                            write_regular_file_const_size(source_path, size);
+                        }
                     };
                     size = platform_.file_size(source_path);
                     break;
@@ -867,20 +906,48 @@ namespace tarxx {
                 return;
             }
 
-            write_header(
-                    file_name,
-                    mode,
-                    file_uid,
-                    file_gid,
-                    size,
-                    platform_.mod_time(source_path),
-                    file_type,
-                    dev_major,
-                    dev_minor,
-                    link_name);
+            const auto write_header_data = [&]() {
+                write_header(
+                        target_path,
+                        mode,
+                        file_uid,
+                        file_gid,
+                        size,
+                        platform_.mod_time(source_path),
+                        file_type,
+                        dev_major,
+                        dev_minor,
+                        link_name);
+            };
 
-            if (write_data) {
-                write_data();
+            if (defer_header_writing) {
+#ifdef WITH_LZ4
+                if (compression_ == compression_mode::lz4) {
+                    lz4_flush();
+                }
+#endif
+                auto header_pos = file_.tellp();
+                block_t dummy_header {};
+                write(dummy_header, true);
+
+                if (write_data) {
+                    write_data();
+#ifdef WITH_LZ4
+                    if (compression_ == compression_mode::lz4) {
+                        lz4_flush();
+                    }
+#endif
+                }
+
+                const auto data_pos = file_.tellp();
+                file_.seekp(header_pos);
+                write_header_data();
+                file_.seekp(data_pos);
+            } else {
+                write_header_data();
+                if (write_data) {
+                    write_data();
+                }
             }
         }
 
