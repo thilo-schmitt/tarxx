@@ -420,6 +420,28 @@ TEST_P(tar_tests, add_from_filesystem_different_invalid_name)
     }
 }
 
+TEST_P(tar_tests, add_empty_block_via_streaming)
+{
+    const auto tar_type = GetParam();
+    const auto size = 42;
+    const auto tar_filename = util::tar_file_name();
+    const auto input_data = util::create_input_data(size);
+    auto test_file = util::create_test_file(tar_type, std::filesystem::temp_directory_path() / "test_file0", input_data);
+    const tarxx::Platform platform;
+    util::remove_if_exists(tar_filename);
+
+    tarxx::tarfile tar_file(tar_filename, tar_type);
+
+    tar_file.add_file_streaming();
+    tar_file.add_file_streaming_data("", 0);
+    tar_file.stream_file_complete(test_file.path, test_file.mode, platform.user_id(), platform.group_id(), 0, test_file.mtime.tv_sec);
+
+    test_file.size = 0;
+    util::tar_has_one_file_and_matches(tar_filename, test_file, tar_type);
+
+    tar_file.close();
+}
+
 TEST_P(tar_tests, add_from_filesystem_stream_data_smaller_than_block_size)
 {
     const auto tar_type = GetParam();
@@ -989,19 +1011,18 @@ TEST_P(tar_tests, add_directory_twice_via_streaming)
     const auto user = platform.user_id();
     const auto group = platform.group_id();
 
-    util::file_info test_dir
-    {
-        .permissions = "drwxr-xr-x",
-        .owner = tar_type == tarxx::tarfile::tar_type::ustar ? platform.user_name(user) : std::to_string(user),
-        .group = tar_type == tarxx::tarfile::tar_type::ustar ? platform.group_name(group) : std::to_string(group),
-        .size = 0,
-        .date = "1970-01-01",
-        .time = "00:00",
-        .path = "test_dir/",
-        .link_name = "",
-        .mtime = {0, 0},
-        .mode = 0755,
-        .device_type = "",
+    util::file_info test_dir {
+            .permissions = "drwxr-xr-x",
+            .owner = tar_type == tarxx::tarfile::tar_type::ustar ? platform.user_name(user) : std::to_string(user),
+            .group = tar_type == tarxx::tarfile::tar_type::ustar ? platform.group_name(group) : std::to_string(group),
+            .size = 0,
+            .date = "1970-01-01",
+            .time = "00:00",
+            .path = "test_dir/",
+            .link_name = "",
+            .mtime = {0, 0},
+            .mode = 0755,
+            .device_type = "",
     };
 
     tarxx::tarfile f(tar_filename, tar_type);
