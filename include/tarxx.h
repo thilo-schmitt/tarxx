@@ -89,7 +89,7 @@ namespace tarxx {
 
     struct errno_exception : std::system_error {
         errno_exception() : std::system_error(std::error_code(errno, std::generic_category())) {}
-
+        errno_exception(int error_code) : std::system_error(std::error_code(error_code, std::generic_category())) {}
         using std::system_error::system_error;
     };
 
@@ -327,13 +327,13 @@ namespace tarxx {
         [[nodiscard]] uid_t user_id() const override
         {
             const auto pw = passwd();
-            return pw == nullptr ? std::numeric_limits<decltype(pw->pw_uid)>::max() : pw->pw_uid;
+            return !pw.has_value() ? std::numeric_limits<uid_t>::max() : pw.value().pw_uid;
         }
 
         [[nodiscard]] gid_t group_id() const override
         {
             const auto pw = passwd();
-            return pw == nullptr ? std::numeric_limits<decltype(pw->pw_uid)>::max() : pw->pw_gid;
+            return !pw.has_value() ? std::numeric_limits<gid_t>::max() : pw.value().pw_gid;
         }
 
         void major_minor(const std::string& path, major_t& major, minor_t& minor) const override
@@ -394,10 +394,26 @@ namespace tarxx {
         }
 
     protected:
-        static struct passwd* passwd()
+        static std::optional<struct ::passwd> passwd()
         {
             const auto uid = geteuid();
-            return getpwuid(uid);
+            struct ::passwd pwd {};
+            struct ::passwd* result = nullptr;
+            // sysconf(_SC_GETPW_R_SIZE_MAX) should
+            // also return the maximum username length
+            // but this is broken on some systems.
+            name_buffer_t buffer {};
+            const auto pw_uid_result = getpwuid_r(uid,
+                                                  &pwd,
+                                                  buffer.data(),
+                                                  buffer.size(),
+                                                  &result);
+            throw_exception_getpwd_getgrgid_on_error(pw_uid_result);
+
+            if (result == nullptr) {
+                return std::nullopt;
+            }
+            return {pwd};
         }
 
         static struct stat get_stat(const std::string& path)
@@ -418,12 +434,25 @@ namespace tarxx {
             if (iter != grpid_cache_.end()) {
                 return iter->second;
             }
-            const auto* const groupPtr = getgrgid(gid);
+
+            struct ::group grp {};
+            struct ::group* result = nullptr;
+            // sysconf(_SC_GETGR_R_SIZE_MAX) should
+            // also return the maximum group name length
+            // but this is broken on some systems.
+            name_buffer_t buffer {};
+            const auto gr_gid_result = getgrgid_r(gid,
+                                                  &grp,
+                                                  buffer.data(),
+                                                  buffer.size(),
+                                                  &result);
+            throw_exception_getpwd_getgrgid_on_error(gr_gid_result);
+
             std::string name;
-            if (groupPtr == nullptr) {
+            if (result == nullptr) {
                 name = std::to_string(gid);
             } else {
-                name = groupPtr->gr_name;
+                name = grp.gr_name;
             }
             grpid_cache_.insert({gid, name});
             return name;
@@ -435,16 +464,51 @@ namespace tarxx {
             if (iter != pwuid_cache_.end()) {
                 return iter->second;
             }
-            const auto* const userPtr = getpwuid(uid);
+
+            struct ::passwd pwd {};
+            struct ::passwd* result = nullptr;
+            // sysconf(_SC_GETPW_R_SIZE_MAX) should
+            // also return the maximum user name length
+            // but this is broken on some systems.
+            name_buffer_t buffer {};
+            const auto pw_uid_result = getpwuid_r(uid,
+                                                  &pwd,
+                                                  buffer.data(),
+                                                  buffer.size(),
+                                                  &result);
+            if (pw_uid_result != 0) {
+                throw errno_exception(pw_uid_result);
+            }
+            throw_exception_getpwd_getgrgid_on_error(pw_uid_result);
+
             std::string name;
-            if (userPtr == nullptr) {
+            if (result == nullptr) {
                 name = std::to_string(uid);
             } else {
-                name = userPtr->pw_name;
+                name = pwd.pw_name;
             }
             pwuid_cache_.insert({uid, name});
             return name;
         }
+
+        static void throw_exception_getpwd_getgrgid_on_error(const int error)
+        {
+            switch (error) {
+                // Errors below are either success
+                // or indicate that the entry was not found
+                case 0:
+                case ENOENT:
+                case ESRCH:
+                case EBADF:
+                case EPERM:
+                    return;
+                default:
+                    throw errno_exception(error);
+            }
+        }
+
+        static constexpr int NAME_BUFFER_SIZE = 8192;
+        using name_buffer_t = std::array<char, NAME_BUFFER_SIZE>;
     };
 
 #endif
