@@ -980,7 +980,10 @@ namespace tarxx {
             stored_files_.insert(name);
 
             const auto store_name = platform_.relative_path(name);
-            const auto store_link = platform_.relative_path(link_name);
+            const auto& store_link = file_type == file_type_flag::SYMBOLIC_LINK
+                                             ? link_name
+                                             : platform_.relative_path(link_name);
+
 
             block_t header {};
             write_into_block(header, mode, UNIX_V7_USTAR_HEADER_POS_MODE, UNIX_V7_USTAR_HEADER_LEN_MODE);

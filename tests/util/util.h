@@ -57,6 +57,7 @@ namespace util {
         struct timespec mtime;
         tarxx::mode_t mode;
         std::string device_type;
+        bool is_symlink = false;
     };
 
     inline std::vector<std::string> split_string(const std::string& str, const char& delim)
@@ -393,7 +394,10 @@ namespace util {
     inline void file_from_tar_matches_original_file(const file_info& test_file, const file_info& file_in_tar, const tarxx::tarfile::tar_type& tar_type, const bool ignore_size = false)
     {
         const tarxx::Platform platform;
-        const auto path = platform.relative_path(test_file.path);
+        const auto path = test_file.is_symlink
+                                  ? test_file.path
+                                  : platform.relative_path(test_file.path);
+
         EXPECT_EQ(path, file_in_tar.path);
         // size may be ignored for tests where the file changes during creation of tar archive
         if (!ignore_size)
@@ -429,13 +433,17 @@ namespace util {
 
             auto expected_file_found = false;
             for (const auto& expected_file : expected_files) {
-                const auto expected_path = platform.relative_path(expected_file.path);
+                const auto expected_path = expected_file.is_symlink
+                                                   ? expected_file.path
+                                                   : platform.relative_path(expected_file.path);
+
                 const auto expected_link_name = platform.relative_path(expected_file.link_name);
                 if (found_file.path != expected_path) continue;
                 if (found_file.link_name != expected_link_name) continue;
 
                 expected_file_found = true;
                 util::file_from_tar_matches_original_file(expected_file, found_file, tar_type, ignore_size);
+                break;
             }
             if (!expected_file_found) {
                 std::cerr << "Missing " << found_file.path << " in tar archive\n";
