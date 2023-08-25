@@ -456,7 +456,7 @@ namespace tarxx {
 #    error "no support for targeted platform"
 #endif
 
-    
+
     struct tarfile {
 
         enum class tar_type {
@@ -746,10 +746,13 @@ namespace tarxx {
             if (stream_file_header_pos_ < 0) throw std::logic_error("Can't finish stream file, none is in progress");
 
             // create last block, 0 init to ensure correctness if size < block size
-            block_t block {};
-            std::copy_n(stream_block_.data(), stream_block_used_, block.data());
-            stream_block_used_ = 0;
-            write(block);
+            // but do not create an empty block
+            if (stream_block_used_ > 0) {
+                block_t block {};
+                std::copy_n(stream_block_.data(), stream_block_used_, block.data());
+                stream_block_used_ = 0;
+                write(block);
+            }
 
             // flush is necessary so seek to the correct positions
 #ifdef WITH_LZ4
