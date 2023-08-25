@@ -35,7 +35,7 @@ endif()
 
 if (WITH_LZ4)
     if (NOT WITH_COMPRESSION)
-        message(FATAL_ERROR "LZ4 option needs compression to be turned on with '-DCOMPRESSION=ON'")
+        message(FATAL_ERROR "LZ4 option needs compression to be turned on with '-DWITH_COMPRESSION=ON'")
     endif()
     find_library(LZ4 liblz4.a REQUIRED)
 

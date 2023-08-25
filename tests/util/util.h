@@ -77,7 +77,7 @@ namespace util {
     template<typename... T, typename = std::enable_if<is_homogeneous_type_v<char*, T...>>>
     inline int execute(const std::string& cmd, T*... args)
     {
-#if defined(__linux)
+#if defined(__linux) 
         char* args_array[] = {const_cast<char*>(cmd.c_str()), args..., nullptr};
         pid_t pid = fork();
         if (pid == 0) {
@@ -96,7 +96,7 @@ namespace util {
 
     inline int execute_with_output(const std::string& cmd, std::string& std_out)
     {
-#if defined(__linux)
+#if defined(__linux) 
         constexpr const auto buf_size = 256;
         std::array<char, buf_size> buffer {};
 
@@ -238,7 +238,6 @@ namespace util {
         }
     }
 
-
     inline void remove_if_exists(const std::string& filename)
     {
         if (std::filesystem::exists(filename))
@@ -247,7 +246,7 @@ namespace util {
 
     inline void file_info_set_stat(file_info& file, const tarxx::tarfile::tar_type& tar_type)
     {
-        const tarxx::Platform platform;
+        tarxx::Platform platform;
         const auto owner = platform.file_owner(file.path);
         const auto group = platform.file_group(file.path);
         switch (tar_type) {
@@ -286,8 +285,8 @@ namespace util {
             file.size = 0U;
         } else if (std::filesystem::is_character_file(file.path) || std::filesystem::is_block_file(file.path)) {
             file.size = 0U;
-            tarxx::major_t major;
-            tarxx::minor_t minor;
+            tarxx::major_t major {};
+            tarxx::minor_t minor {};
             platform.major_minor(file.path, major, minor);
             std::stringstream ss;
             ss << major << "," << minor;
@@ -326,12 +325,11 @@ namespace util {
     {
         auto test_file = create_test_file(tar_type, test_file_path, "");
         std::ofstream ofs(test_file.path);
-        std::array<char, 1024> input {'a'};
-        // write 250mb of 'a'
-        for (auto i = 0; i < size; i += input.size()) {
-            ofs << input.data();
+        for (auto i = 0; i < size; i += 1) {
+            ofs << "a";
         }
-
+        ofs.flush();
+        test_file.size = size;
         return test_file;
     }
 
@@ -397,12 +395,10 @@ namespace util {
         const auto path = test_file.is_symlink
                                   ? test_file.path
                                   : platform.relative_path(test_file.path);
-
         EXPECT_EQ(path, file_in_tar.path);
         // size may be ignored for tests where the file changes during creation of tar archive
         if (!ignore_size)
             EXPECT_EQ(test_file.size, file_in_tar.size);
-
         EXPECT_EQ(test_file.date, file_in_tar.date);
         EXPECT_EQ(test_file.permissions, file_in_tar.permissions);
         EXPECT_EQ(file_in_tar.owner, test_file.owner);
@@ -436,7 +432,6 @@ namespace util {
                 const auto expected_path = expected_file.is_symlink
                                                    ? expected_file.path
                                                    : platform.relative_path(expected_file.path);
-
                 const auto expected_link_name = platform.relative_path(expected_file.link_name);
                 if (found_file.path != expected_path) continue;
                 if (found_file.link_name != expected_link_name) continue;
