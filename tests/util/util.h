@@ -99,13 +99,18 @@ namespace util {
 #if defined(__linux)
         constexpr const auto buf_size = 256;
         std::array<char, buf_size> buffer {};
+        std::string std_err;
 
-        auto pipe = popen(cmd.c_str(), "r");
+        auto pipe = popen((cmd + " 2>&1").c_str(), "r");
         if (!pipe) throw std::runtime_error(std::string("popen() failed, what=") + std::strerror(errno));
 
         size_t count;
         while ((count = fread(buffer.data(), 1, buf_size, pipe)) > 0) {
             std_out.insert(std_out.end(), std::begin(buffer), std::next(std::begin(buffer), count));
+        }
+
+        if (std_out.find("A lone zero block") != std::string::npos) {
+            throw std::runtime_error("Found lone zero blocks in tar");
         }
 
         return pclose(pipe);
@@ -310,7 +315,7 @@ namespace util {
         std::filesystem::create_directories(test_file_path.parent_path());
 
         std::ofstream os(file.path);
-        os << file_content << std::endl;
+        os << file_content;
         os.close();
         file.size = std::filesystem::file_size(file.path);
 
@@ -452,7 +457,7 @@ namespace util {
         const tarxx::Platform platform;
         tar_file.add_file_streaming();
         tar_file.add_file_streaming_data(reference_data.data(), reference_data.size());
-        tar_file.stream_file_complete(reference_file.path, reference_file.mode, platform.user_id(), platform.group_id(), reference_file.size, reference_file.mtime.tv_sec);
+        tar_file.stream_file_complete(reference_file.path, reference_file.mode, platform.user_id(), platform.group_id(), reference_data.size(), reference_file.mtime.tv_sec);
     }
 
     inline std::string create_input_data(unsigned long size)

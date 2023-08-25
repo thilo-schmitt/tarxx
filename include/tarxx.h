@@ -23,7 +23,6 @@
 // OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 // OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
-
 #ifndef TARXX_TARXX_H_F498949DFCF643A3B77C60CF3AA29F36
 #define TARXX_TARXX_H_F498949DFCF643A3B77C60CF3AA29F36
 
@@ -50,12 +49,11 @@
 #include <system_error>
 #include <unordered_map>
 #include <unordered_set>
-
 #include <vector>
 
 #if defined(__linux)
-
 #    include <cerrno>
+#    include <climits>
 #    include <fcntl.h>
 #    include <ftw.h>
 #    include <grp.h>
@@ -86,10 +84,10 @@ namespace tarxx {
     };
 
 #if defined(__linux)
-
     struct errno_exception : std::system_error {
         errno_exception() : std::system_error(std::error_code(errno, std::generic_category())) {}
         errno_exception(int error_code) : std::system_error(std::error_code(error_code, std::generic_category())) {}
+
         using std::system_error::system_error;
     };
 
@@ -103,6 +101,7 @@ namespace tarxx {
     using size_t = uint64_t;
     using major_t = uint32_t;
     using minor_t = uint32_t;
+    using ino_t = uint64_t;
 
     using mode_t = uint32_t;
     enum class permission_t : unsigned int {
@@ -179,7 +178,8 @@ namespace tarxx {
         [[nodiscard]] std::string permissions_str(const std::string& path) const
         {
             const auto permissions = mode(path) & static_cast<unsigned int>(permission_t::mask);
-            std::bitset<9> bits(permissions);
+            constexpr auto permission_bit_count = 9;
+            std::bitset<permission_bit_count> bits(permissions);
             std::string str = "----------";
             for (int i = 0; i < bits.size(); i++) {
                 const auto c =
@@ -312,7 +312,6 @@ namespace tarxx {
     };
 
 #if defined(__linux)
-
     struct PosixOS : OS {
         [[nodiscard]] std::string user_name(uid_t uid) override
         {
@@ -599,36 +598,9 @@ namespace tarxx {
 
         // delete the copy constructor and copy assignment, as multiple instances to the same file are not supported
         tarfile(const tarfile&) = delete;
+        tarfile(tarfile&&) = delete;
         tarfile& operator=(const tarfile& other) = delete;
-
-        tarfile(tarfile&& other) noexcept
-        {
-            *this = std::move(other);
-        }
-
-        tarfile& operator=(tarfile&& other) noexcept
-        {
-            if (this == &other) {
-                return *this;
-            }
-
-            close();
-
-            type_ = other.type_;
-            mode_ = other.mode_;
-
-            file_name_ = std::move(other.file_name_);
-            file_ = std::move(other.file_);
-            callback_ = std::move(other.callback_);
-            stream_file_header_pos_ = other.stream_file_header_pos_;
-            stream_block_ = other.stream_block_;
-            stream_block_used_ = other.stream_block_used_;
-
-            platform_ = std::move(other.platform_);
-            stored_inos_ = std::move(stored_inos_);
-            other.close();
-            return *this;
-        }
+        tarfile& operator=(const tarfile&& other) = delete;
 
         ~tarfile()
         {
@@ -769,6 +741,7 @@ namespace tarxx {
             if (!is_open()) throw std::logic_error("Cannot append file, tar archive is not open");
             if (stream_file_header_pos_ < 0)
                 throw std::logic_error("Can't stream file data, no file added via add_file_streaming");
+            if (size == 0) return;
 
             unsigned long pos = 0;
             block_t block;
@@ -1281,6 +1254,7 @@ namespace tarxx {
             const auto outbuf_size = lz4_call_and_check_error(LZ4F_compressBound, 16 * 1024, &lz4_prefs_);
 
             lz4_out_buf_.reserve(outbuf_size);
+            file_buffer_.reserve(outbuf_size);
             const auto headerSize = lz4_call_and_check_error(LZ4F_compressBegin, lz4_ctx_->get(), lz4_out_buf_.data(),
                                                              lz4_out_buf_.capacity(), &lz4_prefs_);
             lz4_out_buf_pos_ += headerSize;
