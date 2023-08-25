@@ -98,6 +98,19 @@ TEST_P(lz4_tests, add_file_stream_data_two_block_sizes)
     lz4_validate_streaming_data(tarxx::BLOCK_SIZE * 2, tar_type);
 }
 
+TEST_P(lz4_tests, add_file_stream_data_four_block_sizes)
+{
+    const auto tar_type = GetParam();
+    lz4_validate_streaming_data(tarxx::BLOCK_SIZE * 4, tar_type);
+}
+
+TEST_P(lz4_tests, add_file_stream_data_five_block_sizes)
+{
+    const auto tar_type = GetParam();
+    lz4_validate_streaming_data(tarxx::BLOCK_SIZE * 5, tar_type);
+}
+
+
 TEST_P(lz4_tests, add_file_stream_data_multi_block)
 {
     const auto tar_type = GetParam();
