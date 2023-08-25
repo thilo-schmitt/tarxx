@@ -113,7 +113,7 @@ TEST(lz4_tests, add_directory_via_streaming)
     util::remove_if_exists(tar_filename);
     util::remove_if_exists(lz4_filename);
 
-    const tarxx::Platform platform;
+    tarxx::Platform platform;
     tarxx::tarfile f(lz4_filename, tarxx::tarfile::compression_mode::lz4, tar_type);
 
     std::time_t time = std::time(nullptr);
