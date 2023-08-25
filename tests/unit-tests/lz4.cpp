@@ -132,6 +132,34 @@ TEST(lz4_tests, add_directory_via_streaming)
     EXPECT_EQ(file.permissions, "drwxr-xr-x");
 }
 
+TEST_P(lz4_tests, add_from_filesystem_file_grows_while_reading)
+{
+    const auto tar_type = GetParam();
+    const auto tar_filename = util::tar_file_name();
+    const auto lz4_filename = tar_filename + ".lz4";
+    util::remove_if_exists(lz4_filename);
+    util::remove_if_exists(tar_filename);
+
+    tarxx::tarfile tar_file(lz4_filename, tarxx::tarfile::compression_mode::lz4, tar_type);
+    const auto test_file = util::grow_source_file_during_tar_creation(tar_file, tar_type);
+    util::decompress_lz4(lz4_filename, tar_filename);
+    expect_disk_file_ge_file_in_tar_and_tar_valid(tar_filename, test_file, tar_type);
+}
+
+TEST_P(lz4_tests, add_from_filesystem_file_shrinks_while_reading)
+{
+    const auto tar_type = GetParam();
+    const auto tar_filename = util::tar_file_name();
+    const auto lz4_filename = tar_filename + ".lz4";
+    util::remove_if_exists(lz4_filename);
+    util::remove_if_exists(tar_filename);
+
+    tarxx::tarfile tar_file(lz4_filename, tarxx::tarfile::compression_mode::lz4, tar_type);
+    const auto test_file = util::shrink_source_file_during_tar_creation(tar_file, tar_type);
+    util::decompress_lz4(lz4_filename, tar_filename);
+    expect_disk_file_le_file_in_tar_and_tar_valid(tar_filename, test_file, tar_type);
+}
+
 #if defined(__linux)
 TEST(lz4_tests, add_char_special_device_via_streaming)
 {
