@@ -1101,7 +1101,7 @@ namespace tarxx {
 
             ~lz4_ctx()
             {
-                free(ctx_);
+                LZ4F_freeCompressionContext(ctx_);
             }
 
             LZ4F_cctx* get()
