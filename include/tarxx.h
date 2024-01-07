@@ -986,7 +986,7 @@ namespace tarxx {
             std::string resolved_source_path;
             if (file_type == file_type_flag::SYMBOLIC_LINK && read_symlinks) {
                 resolved_source_path = platform_.realpath(source_path);
-                if (!platform_.file_exists(resolved_source_path)) throw std::invalid_argument(resolved_source_path + " does not exist");
+                if (!platform_.file_exists(resolved_source_path)) throw std::invalid_argument("source_path " + source_path + " is a symlink pointing to " + resolved_source_path + " which does not exist");
                 file_type = platform_.type_flag(resolved_source_path);
             } else {
                 resolved_source_path = source_path;
