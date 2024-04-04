@@ -50,6 +50,7 @@
 #include <unordered_map>
 #include <unordered_set>
 #include <vector>
+#include <memory>
 
 #if defined(__linux)
 #    include <cerrno>
@@ -514,6 +515,7 @@ namespace tarxx {
 
 #if defined(__linux)
     struct Platform : public PosixOS, public StdFilesytem {
+        virtual ~Platform() = default;
     };
 #else
 #    error "no support for targeted platform"
@@ -538,26 +540,30 @@ namespace tarxx {
         };
 
         explicit tarfile(const std::string& filename,
-                         tar_type type = tar_type::unix_v7)
-            : tarfile(filename, compression_mode::none, type)
+                         tar_type type = tar_type::unix_v7,
+                         std::unique_ptr<Platform> platform = std::make_unique<Platform>())
+            : tarfile(filename, compression_mode::none, type, std::move(platform))
         {
         }
 
         explicit tarfile(callback_t&& callback,
-                         tar_type type = tar_type::unix_v7)
-            : tarfile(std::move(callback), compression_mode::none, type)
+                         tar_type type = tar_type::unix_v7,
+                         std::unique_ptr<Platform> platform = std::make_unique<Platform>())
+            : tarfile(std::move(callback), compression_mode::none, type, std::move(platform))
         {
         }
 
         explicit tarfile(const std::string& filename,
                          compression_mode compression = compression_mode::none,
-                         tar_type type = tar_type::unix_v7)
+                         tar_type type = tar_type::unix_v7,
+                         std::unique_ptr<Platform> platform = std::make_unique<Platform>())
             : file_(filename, std::ios::out | std::ios::binary),
               file_name_(filename),
               file_buffer_used_(0),
               callback_(nullptr), mode_(output_mode::file_output),
               compression_(compression),
-              type_(type), stream_file_header_pos_(-1), stream_block_ {0}, stream_block_used_(0)
+              type_(type), stream_file_header_pos_(-1), stream_block_ {0}, stream_block_used_(0),
+              platform_(std::move(platform))
         {
 #    ifdef WITH_LZ4
             init_lz4();
@@ -568,10 +574,12 @@ namespace tarxx {
 
         explicit tarfile(callback_t&& callback,
                          compression_mode compression = compression_mode::none,
-                         tar_type type = tar_type::unix_v7)
+                         tar_type type = tar_type::unix_v7,
+                         std::unique_ptr<Platform> platform = std::make_unique<Platform>())
             : file_(), file_name_(), file_buffer_used_(0), callback_(std::move(callback)), mode_(output_mode::stream_output),
               compression_(compression),
-              type_(type), stream_file_header_pos_(-1), stream_block_ {0}, stream_block_used_(0)
+              type_(type), stream_file_header_pos_(-1), stream_block_ {0}, stream_block_used_(0),
+              platform_(std::move(platform))
         {
 #    ifdef WITH_LZ4
             init_lz4();
@@ -581,16 +589,17 @@ namespace tarxx {
         }
 
 #else
-        explicit tarfile(const std::string& filename, tar_type type = tar_type::unix_v7)
-            : file_(filename, std::ios::out | std::ios::binary), file_name_(filename), file_buffer_used_(0), callback_(nullptr), mode_(output_mode::file_output), type_(type), stream_block_ {0}, stream_file_header_pos_(-1), stream_block_used_(0)
+        explicit tarfile(const std::string& filename, tar_type type = tar_type::unix_v7, std::unique_ptr<Platform> platform = std::make_unique<Platform>())
+            : file_(filename, std::ios::out | std::ios::binary), file_name_(filename), file_buffer_used_(0), callback_(nullptr), mode_(output_mode::file_output), type_(type), stream_block_ {0}, stream_file_header_pos_(-1), stream_block_used_(0), platform_(std::move(platform))
         {
             file_buffer_.reserve(file_buffer_default_size_);
         }
 
         explicit tarfile(callback_t&& callback,
-                         tar_type type = tar_type::unix_v7)
+                         tar_type type = tar_type::unix_v7, 
+                         std::unique_ptr<Platform> platform = std::make_unique<Platform>())
             : file_(), file_name_(), file_buffer_used_(0), callback_(std::move(callback)), mode_(output_mode::stream_output),
-              type_(type), stream_file_header_pos_(-1), stream_block_ {0}, stream_block_used_(0)
+              type_(type), stream_file_header_pos_(-1), stream_block_ {0}, stream_block_used_(0), platform_(std::move(platform))
         {
             file_buffer_.reserve(file_buffer_default_size_);
         }
@@ -633,10 +642,10 @@ namespace tarxx {
 
         void add_from_filesystem_recursive(const std::string& path, bool read_symlinks = false)
         {
-            if (platform_.type_flag(path) != file_type_flag::DIRECTORY) {
+            if (platform_->type_flag(path) != file_type_flag::DIRECTORY) {
                 add_from_filesystem(path, read_symlinks);
             } else {
-                platform_.iterateDirectory(path, [&](const std::string& callback_path) {
+                platform_->iterateDirectory(path, [&](const std::string& callback_path) {
                     add_from_filesystem(callback_path, read_symlinks);
                 });
             }
@@ -650,10 +659,10 @@ namespace tarxx {
             if (target_path.empty()) throw std::invalid_argument("target path cannot be empty");
             if (target_path.rfind('/') == target_path.size() - 1) target_path = target_path.substr(0, target_path.size() - 1);
 
-            if (platform_.type_flag(source_path) != file_type_flag::DIRECTORY) {
+            if (platform_->type_flag(source_path) != file_type_flag::DIRECTORY) {
                 add_from_filesystem(source_path, target_path, read_symlinks);
             } else {
-                platform_.iterateDirectory(source_path, [&](const std::string& callback_path) {
+                platform_->iterateDirectory(source_path, [&](const std::string& callback_path) {
                     auto target = callback_path;
                     target.replace(target.begin(), target.begin() + source_path.size(), target_path);
                     add_from_filesystem(callback_path, target, read_symlinks);
@@ -674,7 +683,7 @@ namespace tarxx {
             if (target_path == "..") throw std::invalid_argument("target path can't be ..");
             if (target_path.empty()) throw std::invalid_argument("target path cannot be empty");
 
-            if (platform_.type_flag(source_path) != file_type_flag::DIRECTORY && target_path.rfind('/') == target_path.size() - 1) {
+            if (platform_->type_flag(source_path) != file_type_flag::DIRECTORY && target_path.rfind('/') == target_path.size() - 1) {
                 throw std::invalid_argument("target path can't end with / for non directories");
             }
 
@@ -978,16 +987,16 @@ namespace tarxx {
 
         void read_from_filesystem_write_to_tar(const std::string& source_path, const std::string& target_path, bool read_symlinks)
         {
-            if (!platform_.file_exists(source_path)) throw std::invalid_argument(source_path + " does not exist");
+            if (!platform_->file_exists(source_path)) throw std::invalid_argument(source_path + " does not exist");
             if (source_path == file_name_) throw std::invalid_argument("tar cannot be part of itself");
 
             std::function<void()> write_data;
-            auto file_type = platform_.type_flag(source_path);
+            auto file_type = platform_->type_flag(source_path);
             std::string resolved_source_path;
             if (file_type == file_type_flag::SYMBOLIC_LINK && read_symlinks) {
-                resolved_source_path = platform_.realpath(source_path);
-                if (!platform_.file_exists(resolved_source_path)) throw std::invalid_argument("source_path " + source_path + " is a symlink pointing to " + resolved_source_path + " which does not exist");
-                file_type = platform_.type_flag(resolved_source_path);
+                resolved_source_path = platform_->realpath(source_path);
+                if (!platform_->file_exists(resolved_source_path)) throw std::invalid_argument("source_path " + source_path + " is a symlink pointing to " + resolved_source_path + " which does not exist");
+                file_type = platform_->type_flag(resolved_source_path);
             } else {
                 resolved_source_path = source_path;
             }
@@ -996,9 +1005,9 @@ namespace tarxx {
             major_t dev_major = 0;
             minor_t dev_minor = 0;
             std::string link_name;
-            const auto file_uid = platform_.file_owner(resolved_source_path);
-            const auto file_gid = platform_.file_group(resolved_source_path);
-            auto mode = platform_.mode(resolved_source_path);
+            const auto file_uid = platform_->file_owner(resolved_source_path);
+            const auto file_gid = platform_->file_group(resolved_source_path);
+            auto mode = platform_->mode(resolved_source_path);
 
             const auto defer_header_writing = file_type == file_type_flag::REGULAR_FILE && mode_ == output_mode::file_output;
 
@@ -1008,7 +1017,7 @@ namespace tarxx {
             if ((file_type == file_type_flag::REGULAR_FILE) || (file_type == file_type_flag::HARD_LINK)) {
                 if (!std::ifstream(source_path).good()) throw std::invalid_argument("can't open '" + source_path + "' for reading or file does not exist");
 
-                const auto equivalent = platform_.file_equivalent_present(resolved_source_path, stored_inos_);
+                const auto equivalent = platform_->file_equivalent_present(resolved_source_path, stored_inos_);
                 if (equivalent.has_value()) {
                     link_name = equivalent.value();
                     file_type = file_type_flag::HARD_LINK;
@@ -1024,16 +1033,16 @@ namespace tarxx {
                             write_regular_file_const_size(resolved_source_path, size);
                         }
                     };
-                    size = platform_.file_size(resolved_source_path);
+                    size = platform_->file_size(resolved_source_path);
                     break;
                 case file_type_flag::CHARACTER_SPECIAL_FILE:
                     [[fallthrough]];
                 case file_type_flag::BLOCK_SPECIAL_FILE:
-                    platform_.major_minor(resolved_source_path, dev_major, dev_minor);
+                    platform_->major_minor(resolved_source_path, dev_major, dev_minor);
                     break;
                 case file_type_flag::SYMBOLIC_LINK:
                     mode = static_cast<mode_t>(permission_t::all_all);
-                    link_name = platform_.read_symlink(resolved_source_path);
+                    link_name = platform_->read_symlink(resolved_source_path);
                     break;
                 case file_type_flag::CONTIGUOUS_FILE:
                     // won't happen as we would have to set the contiguous flag.
@@ -1053,7 +1062,7 @@ namespace tarxx {
                 return;
             }
 
-            stored_inos_.insert({platform_.ino(resolved_source_path), resolved_source_path});
+            stored_inos_.insert({platform_->ino(resolved_source_path), resolved_source_path});
 
             const auto write_header_data = [&]() {
                 write_header(
@@ -1062,7 +1071,7 @@ namespace tarxx {
                         file_uid,
                         file_gid,
                         size,
-                        platform_.mod_time(resolved_source_path),
+                        platform_->mod_time(resolved_source_path),
                         file_type,
                         dev_major,
                         dev_minor,
@@ -1128,10 +1137,10 @@ namespace tarxx {
 
             stored_files_.insert(name);
 
-            const auto store_name = platform_.relative_path(name);
+            const auto store_name = platform_->relative_path(name);
             const auto& store_link = file_type == file_type_flag::SYMBOLIC_LINK
                                              ? link_name
-                                             : platform_.relative_path(link_name);
+                                             : platform_->relative_path(link_name);
 
             block_t header {};
             write_into_block(header, mode, UNIX_V7_USTAR_HEADER_POS_MODE, UNIX_V7_USTAR_HEADER_LEN_MODE);
@@ -1151,8 +1160,8 @@ namespace tarxx {
             if (type_ == tar_type::ustar) {
                 write_into_block(header, "ustar", USTAR_HEADER_POS_MAGIC, USTAR_HEADER_LEN_MAGIC);
 
-                write_into_block(header, platform_.user_name(uid), USTAR_HEADER_POS_UNAME, USTAR_HEADER_LEN_UNAME);
-                write_into_block(header, platform_.group_name(gid), USTAR_HEADER_POS_GNAME, USTAR_HEADER_LEN_GNAME);
+                write_into_block(header, platform_->user_name(uid), USTAR_HEADER_POS_UNAME, USTAR_HEADER_LEN_UNAME);
+                write_into_block(header, platform_->group_name(gid), USTAR_HEADER_POS_GNAME, USTAR_HEADER_LEN_GNAME);
 
                 write_into_block(header, to_octal_ascii(dev_major, USTAR_HEADER_LEN_DEVMAJOR),
                                  USTAR_HEADER_POS_DEVMAJOR, USTAR_HEADER_LEN_DEVMAJOR);
@@ -1204,13 +1213,13 @@ namespace tarxx {
             if (name.size() <= UNIX_V7_USTAR_HEADER_LEN_NAME || type_ == tar_type::unix_v7) {
                 write_name_unix_v7_format();
             } else {
-                const auto last_separator_index = name.rfind(platform_.path_separator());
+                const auto last_separator_index = name.rfind(platform_->path_separator());
                 if (last_separator_index == std::string::npos) {
                     write_name_unix_v7_format();
                 } else {
                     // create the prefix by trimming the name to the prefix length
                     const auto prefix_trimmed = name.substr(0, USTAR_HEADER_LEN_PREFIX);
-                    const auto last_separator_in_prefix = prefix_trimmed.rfind(platform_.path_separator());
+                    const auto last_separator_in_prefix = prefix_trimmed.rfind(platform_->path_separator());
                     if (last_separator_in_prefix == std::string::npos) {
                         // no possible delimiter found to splice part
                         // write name in unix v7 and truncate at the end
@@ -1360,7 +1369,7 @@ namespace tarxx {
         block_t stream_block_;
         size_t stream_block_used_;
 
-        Platform platform_;
+        std::unique_ptr<Platform> platform_;
         std::unordered_map<ino_t, std::string> stored_inos_;
         std::unordered_set<std::string> stored_files_;
 
