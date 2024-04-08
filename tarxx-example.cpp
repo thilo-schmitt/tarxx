@@ -179,7 +179,7 @@ int main(const int argc, char* const* const argv)
                 break;
 #    endif
             case 'f':
-                filename = optarg;
+                filename = (optarg != nullptr ? optarg : "");
                 break;
             case 't':
                 tar_type = static_cast<tarxx::tarfile::tar_type>(std::stoi(optarg));
